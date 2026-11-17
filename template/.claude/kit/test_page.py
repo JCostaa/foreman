@@ -134,7 +134,7 @@ def answers_from_the_page(page):
     """A question, a permission (allow or deny) and a session's turn (a message) are answered on
     the page while held, through /api/answer with the token; not held, the page says where."""
     code = script(page)
-    assert 'const post = (path, body) => fetch(path, { method: "POST", headers: { "Content-Type": "application/json", "X-Kit-Token": TOKEN }' in code
+    assert 'const post = (path, body) => fetch(scoped(path), { method: "POST", headers: { "Content-Type": "application/json", "X-Kit-Token": TOKEN }' in code
     assert 'post("api/answer", { wt: a.wt, session: a.session, agent: a.agent, qid: a.qid, ...extra })' in code
     for part in ('{ behavior: "allow" }', '{ behavior: "deny" }', "{ message: text }", "{ release: true }", "{ answers }"):
         assert part in code, f"the page must send {part}"
@@ -250,7 +250,10 @@ def preferences(page):
         assert re.search(r"try \{[^}\n]*localStorage\.getItem\(" + key, page) and re.search(r"try \{ localStorage\.setItem\(" + key, page), key
     assert 'document.documentElement.lang = lang === "pt" ? "pt-BR" : "en"' in page
     assert "attn === null || TOKEN === PLACEHOLDER" in page and 'const PLACEHOLDER = "__KIT_" + "TOKEN__";' in page
-    assert 'new EventSource("api/events?t=" + encodeURIComponent(TOKEN))' in page and "startPoll()" in page, "live stream with a poll fallback"
+    assert 'new EventSource(scoped("api/events?t=" + encodeURIComponent(TOKEN)))' in page and "startPoll()" in page, "live stream with a poll fallback"
+    assert "const getJSON = async (p) => { const r = await fetch(scoped(p));" in page, "every read names the project on screen"
+    assert 'path.startsWith("api/projects") ? path' in page and "x.p !== proj && x.pending > (projSeen[x.root] ?? x.pending)" in page, \
+        "the project list is not scoped, and another project that starts waiting on the dev chimes"
 
 
 CHECKS = (both_languages, every_word_translated, whole_commands, answers_from_the_page, office, findings_panel, now_panel, tree, switches_on_page,
@@ -297,7 +300,9 @@ MUTATIONS = (
     (preferences, "theme outside try", lambda p: p.replace('try { theme = ["light", "dark", "system"].includes(localStorage.getItem(THEME_KEY)) ? localStorage.getItem(THEME_KEY) : "dark" } catch (e) {}', 'theme = localStorage.getItem(THEME_KEY);')),
     (findings_panel, "decided on the first click", lambda p: p.replace('  const decide = (b, key, decision) => {\n', '  const decide = (b, key, decision) => {\n    post("api/findings-decision", { wt: sel.wt, id: d.id, key, decision });\n')),
     (findings_panel, "dismissed alerts not restorable", lambda p: p.replace("dismissed.delete(b.dataset.restore)", "dismissed.add(b.dataset.restore)")),
-    (preferences, "no live stream", lambda p: p.replace('new EventSource("api/events?t=" + encodeURIComponent(TOKEN))', 'new EventSource("api/events")')),
+    (preferences, "reads not scoped", lambda p: p.replace("const r = await fetch(scoped(p));", "const r = await fetch(p);")),
+    (preferences, "other projects silent", lambda p: p.replace("x.p !== proj && x.pending > (projSeen[x.root] ?? x.pending)", "false")),
+    (preferences, "no live stream", lambda p: p.replace('new EventSource(scoped("api/events?t=" + encodeURIComponent(TOKEN)))', 'new EventSource("api/events")')),
 )
 
 

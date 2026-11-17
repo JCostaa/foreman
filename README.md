@@ -328,6 +328,14 @@ bash .claude/kit/scripts/work.sh ui start   # background, prints the URL, frees 
 bash .claude/kit/scripts/work.sh ui stop
 ```
 
+One dashboard serves every project with Foreman on your machine. Each project registers itself
+in `~/.foreman/projects.json` when a Claude Code session starts in it, and `ui start` in a second
+project reuses the dashboard already running (it prints that dashboard's link to the project)
+instead of starting another. The project picker in the top bar switches the whole page, map and
+chat included; a project that is not on screen still shows its count of alerts there, and
+chimes when something starts waiting on you. Only the project on screen holds requests for the
+page; the others answer in their terminals as usual.
+
 In Cursor, Codex and Copilot the stages do not launch each other. Run each stage in a new chat
 or session, pick the role (`@agent-refiner` in Cursor, the `refiner` agent in Copilot, or "act
 as `.claude/agents/refiner.md`" in Codex) and give it the work directory. Run
@@ -405,7 +413,7 @@ title. In Codex or Copilot, where there are no slash commands, say "follow
 | `work.sh init <ID> "<title>"` | open a work directory (`/task` does this) |
 | `work.sh status` | every stage: gate, status or verdict, open clarifications, and what is next. Exits 1 on a failure |
 | `work.sh review-package` | write `review.diff`: commits and diff since the base, new files included |
-| `work.sh ui start` / `ui stop` | local dashboard of every worktree's tasks, in the background (first free port from 8787) |
+| `work.sh ui start` / `ui stop` | local dashboard of every worktree's tasks, in the background (first free port from 8787); a dashboard already running serves this project too, and start prints its link |
 | `work.sh ui [port]` | local dashboard in the foreground |
 | `work.sh ui answers [on\|off]` | let the dashboard answer this worktree's questions (default off) |
 | `work.sh ui turns [on\|off]` | let the dashboard send this worktree's main session its next message (default off) |

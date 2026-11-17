@@ -61,6 +61,17 @@ def launch(root, agent_type, prompt="work dir .work/TASK-1"):
 
 
 def main():
+    # The registry of projects (one dashboard serves them all) goes to a temporary home: the
+    # checks never touch the dev's ~/.foreman.
+    home = tempfile.mkdtemp()
+    os.environ["FOREMAN_HOME"] = home
+    try:
+        checks()
+    finally:
+        shutil.rmtree(home, ignore_errors=True)
+
+
+def checks():
     root = tempfile.mkdtemp()
     try:
         shutil.copytree(CLAUDE, os.path.join(root, ".claude"), ignore=shutil.ignore_patterns("__pycache__"))
@@ -261,8 +272,70 @@ def main():
     rooms_and_agents()
     switches()
     closing_docs()
+    projects_server()
     print("ok: gates, readiness, fix-round cap, event log, review package, exports, eval graders, dashboard,"
-          " learnings, merge order, attention alerts, web answers, hook wiring, closing and cleanup")
+          " learnings, merge order, attention alerts, web answers, hook wiring, closing and cleanup, one dashboard for every project")
+
+
+def projects_server():
+    """One dashboard serves every registered project: /api/projects lists them with their alert
+    counts, ?p=<index> picks one for every other endpoint, an unknown index is a 404, and only the
+    project on screen counts as an open page for the holds."""
+    import http.client
+    import threading
+    d = load_dashboard("dashboard_projects")
+    base = tempfile.mkdtemp()
+    old_home = os.environ.get("FOREMAN_HOME")
+    os.environ["FOREMAN_HOME"] = os.path.join(base, "home")
+    try:
+        roots = []
+        for name in ("alpha", "beta"):
+            r = os.path.join(base, name)
+            os.makedirs(os.path.join(r, ".claude"))
+            shutil.copy(FLOW, os.path.join(r, ".claude", "flow.json"))
+            subprocess.run(["git", "init", "-q", r], check=True, capture_output=True)
+            subprocess.run(["git", "-C", r, "-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "--allow-empty", "-m", "i"], check=True, capture_output=True)
+            roots.append(os.path.realpath(r))
+        alpha, beta = roots
+        assert not d.register(base), "a directory without Foreman is not registered"
+        assert d.register(beta) and d.register(beta), "registering twice keeps one entry"
+        assert [x["root"] for x in d.read_registry()] == [beta], d.read_registry()
+        assert d.project_roots(alpha) == [alpha, beta], "the server's own project and the registry's, by path"
+        os.makedirs(os.path.join(beta, ".work", "TASK-B"))
+        open(os.path.join(beta, ".work", "TASK-B", "00-purpose.md"), "w").write("# TASK-B beta work\n")
+        adir = os.path.join(beta, ".work", "attention", "s1")
+        os.makedirs(adir)
+        now = time.time()
+        open(os.path.join(adir, "main.json"), "w").write(json.dumps({"kind": "turn", "since": now, "detail": "", "claude_pid": os.getpid()}))
+        listed = d.list_projects(alpha, now)
+        assert [(x["name"], x["here"], x["pending"]) for x in listed] == [("alpha", True, 0), ("beta", False, 1)], listed
+        assert not os.path.exists(os.path.join(beta, ".work", "attention", ".page")), "counting alerts must not open the page"
+        handler = type("H", (d.Handler,), {"root": alpha, "token": "t" * 24})
+        server = d.http.server.ThreadingHTTPServer(("127.0.0.1", 0), handler)
+        threading.Thread(target=server.serve_forever, daemon=True).start()
+        try:
+            def get(path):
+                c = http.client.HTTPConnection("127.0.0.1", server.server_port, timeout=10)
+                c.request("GET", path, headers={"Host": "localhost"})
+                r = c.getresponse()
+                return r.status, r.read().decode()
+            code, body = get("/api/tasks")
+            assert code == 200 and json.loads(body) == [], "without ?p: the server's own project"
+            code, body = get("/api/tasks?p=1")
+            assert code == 200 and [t["id"] for g in json.loads(body) for t in g["tasks"]] == ["TASK-B"], body
+            assert get("/api/tasks?p=7")[0] == 404 and get("/flow.json?p=7")[0] == 404, "an unknown project is a 404"
+            code, body = get("/api/projects")
+            assert code == 200 and [x["name"] for x in json.loads(body)] == ["alpha", "beta"], body
+            assert get("/api/attention?p=1")[0] == 200 and os.path.exists(os.path.join(beta, ".work", "attention", ".page")), \
+                "the project on screen counts as an open page"
+        finally:
+            server.shutdown()
+    finally:
+        if old_home is None:
+            os.environ.pop("FOREMAN_HOME", None)
+        else:
+            os.environ["FOREMAN_HOME"] = old_home
+        shutil.rmtree(base, ignore_errors=True)
 
 
 def merge_order():

@@ -222,7 +222,23 @@
   .taskmenu > summary::-webkit-details-marker { display:none } .taskmenu > summary::after { content:"▾"; color:var(--mute) } .taskmenu > summary:hover { border-color:var(--accent) }
   .taskmenu .pick { overflow:hidden; text-overflow:ellipsis; white-space:nowrap }
   .taskmenu .menu { position:absolute; top:calc(100% + 6px); left:0; width:360px; max-height:65vh; overflow:auto; background:var(--card); border:1px solid var(--line); border-radius:10px; box-shadow:0 14px 34px rgba(0,0,0,.4); padding:10px 0; z-index:40 }
+  .projmenu > summary { font-weight:700 } .projmenu .live-dot { width:8px; height:8px; border-radius:50%; background:var(--line); display:inline-block; flex:none } .projmenu .live-dot.on { background:var(--ok) }
+  .projmenu + .taskmenu { margin-left:6px }
   .desk { display:grid; grid-template-columns:minmax(0,1fr) 400px; gap:14px; align-items:start; margin-top:10px }
+  .side .waiting { margin:0 0 10px } .side .credit { padding-top:16px }
+  /* The office fills the window: no page scroll, the map takes every pixel left, the chat sits
+     under it and the side panel scrolls on its own. A narrow window scrolls as before. */
+  @media (min-width: 1101px) {
+    html, body { height:100% } body { overflow:hidden }
+    .app { height:100vh; display:flex; flex-direction:column }
+    main { flex:1; min-height:0; padding:10px 16px 12px; display:flex; flex-direction:column }
+    .desk { flex:1; min-height:0; margin-top:0; align-items:stretch }
+    .center, #plan, .stage { display:flex; flex-direction:column; min-height:0 } .center { height:100% } #plan, .stage { flex:1 }
+    .worldbox { flex:1; height:auto; min-height:0 }
+    .world-hint { white-space:nowrap; overflow:hidden; text-overflow:ellipsis; margin:6px 2px 0 }
+    .dock { margin-top:8px; padding:8px 12px } .dock .said { max-height:90px } .dock-row { margin-top:6px } .dock-row textarea { min-height:40px }
+    .side { position:static; height:100%; max-height:none }
+  }
   @media (max-width: 1100px) { .desk { grid-template-columns:1fr } }
   .side { background:var(--card); border:1px solid var(--line); border-radius:12px; padding:10px 14px 14px; position:sticky; top:70px; max-height:calc(100vh - 82px); overflow:auto }
   .side .tabs { margin:0 0 6px } .side h1 { font-size:15px; margin:8px 0 2px } .side .now { grid-template-columns:1fr } .side .now .verb { font-size:14px; padding:6px }
@@ -241,7 +257,7 @@
 <body>
 <div class="app">
 <header class="brand topbar"><svg class="logo" viewBox="0 0 64 64" aria-hidden="true"><rect x="10" y="23" width="44" height="34" rx="10" fill="#121826" stroke="#f5a524" stroke-width="3"/><path d="M7 27h50a2.5 2.5 0 0 0 0-5h-3.5C53.5 11.5 44 4 32 4S10.5 11.5 10.5 22H7a2.5 2.5 0 0 0 0 5z" fill="#f5a524"/><rect x="28.5" y="4.5" width="7" height="16" rx="2.5" fill="#c97f00"/><rect x="16" y="32" width="32" height="15" rx="5" fill="#070b14"/><path class="pulse" d="M19 40h6l3-5.5 4.5 11 3-5.5h9.5" fill="none" stroke="#4cc9f0" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"/><rect x="24" y="50" width="16" height="3" rx="1.5" fill="#f5a524" opacity=".55"/></svg><div class="bname"><b>FOREMAN</b><span data-i18n="brand.tag">mission control for coding agents</span></div>
-<details class="taskmenu" id="taskmenu"><summary id="task-pick"></summary><div class="menu"><div class="side-h" data-i18n="side.tasks">Tasks</div><div id="tasks"><div class="meta" style="padding:0 14px" data-i18n="loading">Loading…</div></div></div></details>
+<details class="taskmenu projmenu" id="projmenu" hidden><summary id="proj-pick"></summary><div class="menu"><div class="side-h" data-i18n="proj.title">Projects</div><div id="projects"></div></div></details><details class="taskmenu" id="taskmenu"><summary id="task-pick"></summary><div class="menu"><div class="side-h" data-i18n="side.tasks">Tasks</div><div id="tasks"><div class="meta" style="padding:0 14px" data-i18n="loading">Loading…</div></div></div></details>
 <div class="controls">
   <span class="live" id="live"></span>
   <button id="lang-btn" type="button"></button>
@@ -251,15 +267,15 @@
   <button id="theme-btn" type="button"></button>
 </div></header>
 <main>
-<section class="waiting" id="waiting" hidden>
-<h2 id="waiting-title" data-i18n="waiting.title">Waiting on you</h2>
-<div class="cards" id="attn"></div>
-<div class="cards" id="todo" style="margin-top:8px"></div>
-</section>
-<div class="meta" id="legend" style="margin-top:8px"></div>
 <div class="desk">
 <div class="center"><div id="plan" class="plan"></div></div>
 <section class="side">
+<section class="waiting" id="waiting" hidden>
+<h2 id="waiting-title" data-i18n="waiting.title">Waiting on you</h2>
+<div class="cards" id="attn"></div>
+<div class="cards" id="todo" style="margin:0 0 8px"></div>
+</section>
+<div class="meta" id="legend" style="margin-top:8px"></div>
 <div class="tabs"><button type="button" data-tab="tree" data-i18n="tab.tree">Steps</button><button type="button" data-tab="office" data-i18n="tab.office">Office</button></div>
 <div id="pane-task">
 <h1 id="title">Foreman</h1>
@@ -272,9 +288,9 @@
 </div>
 </div>
 <div id="pane-crew" hidden><div id="pop"></div><h3 class="crew-h" data-i18n="h.crew">Crew</h3><div id="crew-list"></div></div>
+<a class="credit" href="https://github.com/yantadeu/foreman" target="_blank" rel="noopener" data-i18n="brand.credit">Foreman by Yan Tadeu · Apache-2.0</a>
 </section>
 </div>
-<a class="credit" href="https://github.com/yantadeu/foreman" target="_blank" rel="noopener" data-i18n="brand.credit">Foreman by Yan Tadeu · Apache-2.0</a>
 </main>
 </div>
 <dialog id="dlg"></dialog>
@@ -646,6 +662,9 @@ const I18N = /* i18n:begin */{
   "chat.sent": "Sent to the session.",
   "chat.none": "No Claude session is open here, and the page cannot open one. Run this in a terminal:",
   "pick.none": "No task",
+  "proj.title": "Projects",
+  "proj.needs": "{name}: something needs you",
+  "proj.live": "a Claude session is open",
   "world.near": "Near {name}",
   "world.alone": "Nobody near you",
   "world.goto": "→ Foreman",
@@ -1039,6 +1058,9 @@ const I18N = /* i18n:begin */{
   "chat.sent": "Enviado para a sessão.",
   "chat.none": "Nenhuma sessão do Claude está aberta aqui, e a página não consegue abrir uma. Rode isto num terminal:",
   "pick.none": "Nenhuma tarefa",
+  "proj.title": "Projetos",
+  "proj.needs": "{name}: algo precisa de você",
+  "proj.live": "uma sessão do Claude está aberta",
   "world.near": "Perto de {name}",
   "world.alone": "Ninguém perto de você",
   "world.goto": "→ Foreman",
@@ -1128,13 +1150,17 @@ async function errorText(r) {
   return `<div class="bad">${msg}</div><details><summary>${t("err.raw")}</summary><div class="meta">${esc(raw.slice(0, 300))}</div></details>`;
 }
 // null means "not found"; a server or network error throws, so it never reads as "no task".
-const getJSON = async (p) => { const r = await fetch(p); if (r.status === 404) return null; if (!r.ok) throw new Error(p + ": HTTP " + r.status + " " + (await r.text()).slice(0, 200)); return r.json() };
+// One dashboard serves every project of the machine: each request names the project on screen
+// by its index in /api/projects (?p=), never by a path. An older server has no projects: no ?p.
+let proj = null, projects = [], projSeen = {};
+const scoped = (path) => proj == null || path.startsWith("api/projects") ? path : path + (path.includes("?") ? "&" : "?") + "p=" + proj;
+const getJSON = async (p) => { const r = await fetch(scoped(p)); if (r.status === 404) return null; if (!r.ok) throw new Error(p + ": HTTP " + r.status + " " + (await r.text()).slice(0, 200)); return r.json() };
 // Per-server secret the dashboard substitutes when it serves this page; required by every POST.
 const TOKEN = "__KIT_TOKEN__";
 // Split so the server's substitution leaves this one alone: TOKEN still equal to it means the
 // page was not served by a Foreman dashboard.
 const PLACEHOLDER = "__KIT_" + "TOKEN__";
-const post = (path, body) => fetch(path, { method: "POST", headers: { "Content-Type": "application/json", "X-Kit-Token": TOKEN }, body: JSON.stringify(body) });
+const post = (path, body) => fetch(scoped(path), { method: "POST", headers: { "Content-Type": "application/json", "X-Kit-Token": TOKEN }, body: JSON.stringify(body) });
 
 // Robots: one per role, its color and emblem; eyes and antenna show the state.
 const ROLES = {
@@ -1248,7 +1274,44 @@ async function tick() {
   if (again) { again = false; tick() }
 }
 
+// The project picker: the projects of the registry, each with its alert count; a project that
+// is not on screen and starts waiting on you chimes and notifies, like the one on screen.
+async function loadProjects() {
+  const ps = await getJSON("api/projects");
+  projects = Array.isArray(ps) ? ps : [];
+  if (!projects.length) { proj = null; $("projmenu").hidden = true; return }
+  if (proj == null || !projects[proj]) {
+    let want = new URLSearchParams(location.search).get("project"), saved = null;
+    try { saved = localStorage.getItem("foreman-project") } catch (e) {}
+    const pick = (want && projects.find(x => x.name === want)) || (saved && projects.find(x => x.root === saved)) || projects.find(x => x.here) || projects[0];
+    proj = pick.p;
+    if (stream) connect();
+  }
+  projects.forEach(x => {
+    if (x.p !== proj && x.pending > (projSeen[x.root] ?? x.pending)) {
+      beep();
+      if ("Notification" in window && Notification.permission === "granted") new Notification(t("proj.needs", { name: x.name }), { tag: "foreman-proj-" + x.name });
+    }
+    projSeen[x.root] = x.pending;
+  });
+  $("projmenu").hidden = projects.length < 2;
+  const cur = projects[proj];
+  const others = projects.filter(x => x.p !== proj).reduce((n, x) => n + x.pending, 0);
+  setHTML($("proj-pick"), `<span class="live-dot${cur.live ? " on" : ""}"></span><span class="pick">${esc(cur.name)}</span>${others ? `<span class="badge">${others}</span>` : ""}`);
+  setHTML($("projects"), projects.map(x => `<button class="task${x.p === proj ? " sel" : ""}" data-proj="${x.p}"><div class="t"><span class="live-dot${x.live ? " on" : ""}" title="${x.live ? esc(t("proj.live")) : ""}"></span><span class="id">${esc(x.name)}</span>${x.pending ? `<span class="badge">${x.pending}</span>` : ""}</div><div class="sub">${esc(x.root)}</div></button>`).join(""));
+  $("projects").querySelectorAll("[data-proj]").forEach(b => b.onclick = () => selectProject(+b.dataset.proj));
+}
+function selectProject(i) {
+  $("projmenu").open = false;
+  if (i === proj || !projects[i]) return;
+  proj = i;
+  try { localStorage.setItem("foreman-project", projects[i].root) } catch (e) {}
+  history.replaceState(null, "", location.pathname + "?project=" + encodeURIComponent(projects[i].name));
+  sel = null; openFile = null; openBot = null; lastTask = null; chatQueue = null; attnSig = "";
+  connect(); tick();
+}
 async function render() {
+  await loadProjects();
   const [tasks, attn, flow, wts] = await Promise.all([getJSON("api/tasks"), getJSON("api/attention"), getJSON("flow.json"), getJSON("api/worktrees")]);
   wtInfo = Array.isArray(wts) ? wts : [];
   flowCfg = flow && typeof flow === "object" ? flow : {};
@@ -1275,7 +1338,7 @@ async function render() {
     ${g.tasks.map(k => `<button class="task${sel && sel.wt === g.wt && sel.id === k.id ? " sel" : ""}" data-wt="${g.wt}" data-id="${esc(k.id)}">
       <div class="t"><span class="id">${k.current ? "● " : ""}${esc(k.id)}</span>${statusBadge(shown(k))}</div>
       <div class="sub">${esc(k.title) || "&nbsp;"}</div></button>`).join("")}`).join("") || `<div class="meta" style="padding:0 14px">${t("no.task.any")}</div>`);
-  document.querySelectorAll(".task").forEach(b => b.onclick = () => { $("taskmenu").open = false; select(+b.dataset.wt, b.dataset.id) });
+  $("tasks").querySelectorAll(".task").forEach(b => b.onclick = () => { $("taskmenu").open = false; select(+b.dataset.wt, b.dataset.id) });
   // The task picker in the top bar: the task on screen, and how many things wait on you.
   const cur = sel && groups.flatMap(g => g.tasks.map(k => ({ ...k, wt: g.wt, wtName: g.name }))).find(k => k.wt === sel.wt && k.id === sel.id);
   const waitingN = groups.reduce((n, g) => n + pending(g.wt), 0);
@@ -2020,7 +2083,7 @@ function showOffice(d, list, now) {
   const stageOf = (r) => fake ? null : d.stages.find(s => s.agent === r);
   const plan = $("plan");
   // The world is built once per plan and language; the people then move over it.
-  const key = lang + JSON.stringify(rooms());
+  const key = lang + proj + JSON.stringify(rooms());
   if (plan.dataset.key !== key || !world) {
     plan.dataset.key = key;
     world = buildWorld(); actors = {};
@@ -2349,13 +2412,14 @@ function beep() {
 }
 
 // Live updates: the server's event stream; when it is refused or drops, a 2 s poll.
-let live = false, poll = null, connecting = true;
+let live = false, poll = null, connecting = true, stream = null;
 function liveLabel() { const el = $("live"); el.className = "live" + (live ? "" : " off"); el.innerHTML = `<i></i>${t(live ? "live.on" : connecting ? "live.connecting" : "live.off")}` }
 function startPoll() { if (!poll) poll = setInterval(tick, 2000) }
 function connect() {
   if (!("EventSource" in window)) { startPoll(); return }
   // The stream takes the page's token: another site cannot hold its connections.
-  const es = new EventSource("api/events?t=" + encodeURIComponent(TOKEN));
+  if (stream) stream.close();
+  const es = stream = new EventSource(scoped("api/events?t=" + encodeURIComponent(TOKEN)));
   es.addEventListener("hello", () => { live = true; connecting = false; liveLabel(); if (poll) { clearInterval(poll); poll = null } });
   es.addEventListener("change", () => tick());
   es.onerror = () => { es.close(); live = false; connecting = false; liveLabel(); startPoll() };

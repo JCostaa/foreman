@@ -2,6 +2,17 @@
 
 ## Unreleased
 
+- One dashboard for every project. Projects register themselves in `~/.foreman/projects.json`
+  (`$FOREMAN_HOME`): on a session start, when a dashboard starts, and on `work.sh ui start`, which
+  now reuses a dashboard already running instead of starting a second one. A project picker in
+  the top bar switches the whole page; each request names its project by index (`?p=`), never
+  by a path. New `GET /api/projects` lists the projects with their alert counts. A project not
+  on screen chimes and notifies when it starts waiting on you. Only the project on screen holds
+  requests for the page.
+- The office fills the window: no page scroll, the map takes the height left over, the chat
+  sits under it, and "Waiting on you" moves to the side panel, which scrolls on its own.
+- Fixed: a click on a project in the picker opened a task instead.
+
 - A new page layout. The left sidebar is gone; the top bar holds the logo, a task picker (with
   the count of what waits on you) and the controls. The world takes the middle of the page; the
   task (Now, the steps, the decisions, the events) and the crew are tabs of a panel beside it.
