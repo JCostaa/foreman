@@ -1,0 +1,1723 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Foreman</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64' aria-hidden='true'%3E%3Crect x='10' y='23' width='44' height='34' rx='10' fill='%23121826' stroke='%23f5a524' stroke-width='3'/%3E%3Cpath d='M7 27h50a2.5 2.5 0 0 0 0-5h-3.5C53.5 11.5 44 4 32 4S10.5 11.5 10.5 22H7a2.5 2.5 0 0 0 0 5z' fill='%23f5a524'/%3E%3Crect x='28.5' y='4.5' width='7' height='16' rx='2.5' fill='%23c97f00'/%3E%3Crect x='16' y='32' width='32' height='15' rx='5' fill='%23070b14'/%3E%3Cpath d='M19 40h6l3-5.5 4.5 11 3-5.5h9.5' fill='none' stroke='%234cc9f0' stroke-width='2.6' stroke-linecap='round' stroke-linejoin='round'/%3E%3Crect x='24' y='50' width='16' height='3' rx='1.5' fill='%23f5a524' opacity='.55'/%3E%3C/svg%3E">
+<style>
+  /* Foreman: a control room. Dark by default; the theme button switches to light. */
+  :root { --bg:#070a12; --card:#0d121d; --card2:#111827; --fg:#d7dee9; --mute:#7d8aa0; --line:#1e2738; --sel:#141c2b;
+          --run:#4cc9f0; --ok:#3ddc97; --bad:#ff6b6b; --warn:#f5a524; --accent:#f5a524; --floor:#0b1120; --floor2:#0e1527;
+          --glow:0 0 0 1px rgba(245,165,36,.35), 0 0 24px rgba(245,165,36,.12);
+          --mono:"JetBrains Mono","SF Mono","Cascadia Code",Menlo,Consolas,monospace; }
+  :root[data-theme="light"] { --bg:#f3f5f9; --card:#fff; --card2:#f8fafc; --fg:#162033; --mute:#5b6779; --line:#d8dee8; --sel:#eef2f8;
+          --run:#0b84c6; --ok:#13865a; --bad:#d23b3b; --warn:#b26b00; --accent:#c27c00; --floor:#eef2f8; --floor2:#e6ebf3;
+          --glow:0 0 0 1px rgba(194,124,0,.35), 0 6px 18px rgba(20,32,51,.08); }
+  * { box-sizing:border-box }
+  body { margin:0; color:var(--fg); font:13px/1.5 var(--mono); background:radial-gradient(1200px 600px at 70% -200px, rgba(76,201,240,.07), transparent 60%), var(--bg) }
+  :root[data-theme="light"] body { background:var(--bg) }
+  .app { display:grid; grid-template-columns:280px minmax(0,1fr); min-height:100vh }
+  aside { border-right:1px solid var(--line); background:linear-gradient(180deg, var(--card), var(--bg)); padding:12px 0; max-height:100vh; position:sticky; top:0; overflow:auto; display:flex; flex-direction:column }
+  #tasks { flex:1 }
+  main { padding:16px 20px 40px; min-width:0 }
+  @media (max-width: 860px) { .app { grid-template-columns:1fr } aside { position:static; max-height:none; border-right:0; border-bottom:1px solid var(--line) } }
+  button { font:inherit; background:var(--card); color:var(--fg); border:1px solid var(--line); border-radius:3px; padding:3px 12px; cursor:pointer }
+  button:hover { border-color:var(--accent) } button:disabled { opacity:.5; cursor:default }
+  button.primary { border-color:var(--accent); color:var(--accent) } button.danger { border-color:var(--bad); color:var(--bad) }
+  input[type=text], textarea { font:inherit; background:var(--bg); color:var(--fg); border:1px solid var(--line); border-radius:3px; padding:4px 8px; width:100% }
+  a { color:var(--run) }
+  h1 { font-size:17px; margin:14px 0 2px; color:var(--accent) }
+  h2 { font-size:11px; text-transform:uppercase; letter-spacing:.14em; color:var(--mute); margin:24px 0 10px }
+  h2::before { content:""; display:inline-block; width:6px; height:6px; margin-right:8px; background:var(--accent); vertical-align:middle; border-radius:1px }
+  .meta { color:var(--mute); font-size:12px } .warn { color:var(--warn) } .bad { color:var(--bad) } .ok { color:var(--ok) }
+  details > summary { cursor:pointer; color:var(--mute); font-size:12px }
+  /* brand */
+  .brand { display:flex; align-items:center; gap:12px; padding-bottom:12px; border-bottom:1px solid var(--line) }
+  .brand .logo { width:40px; height:40px; flex:none } .brand .logo .pulse { stroke-dasharray:60; animation:pulse 2.4s linear infinite }
+  .bname { display:flex; flex-direction:column; line-height:1.15 } .bname b { color:var(--accent); letter-spacing:.18em; font-size:16px }
+  .bname span { color:var(--mute); font-size:11px; letter-spacing:.08em; text-transform:uppercase }
+  .controls { margin-left:auto; display:flex; flex-wrap:wrap; gap:8px; align-items:center; font-size:12px; color:var(--mute) }
+  .live { display:inline-flex; align-items:center; gap:6px } .live i { width:8px; height:8px; border-radius:50%; background:var(--ok) } .live.off i { background:var(--warn) }
+  @keyframes pulse { 0% { stroke-dashoffset:60 } 60%,100% { stroke-dashoffset:0 } }
+  /* sidebar */
+  .side-h { padding:0 14px 8px; font-weight:600; color:var(--accent); text-transform:uppercase; letter-spacing:.14em; font-size:11px }
+  .wt { padding:10px 14px 4px; color:var(--mute); font-size:12px; overflow-wrap:anywhere } .wt b { color:var(--fg) }
+  .task { display:block; width:100%; text-align:left; border:0; border-left:3px solid transparent; border-radius:0; background:none; padding:6px 14px 6px 18px }
+  .task:hover, .task.sel { background:var(--sel) } .task.sel { border-left-color:var(--accent) }
+  .task .t { display:flex; gap:6px; align-items:center } .task .id { font-weight:600 }
+  .task .sub { color:var(--mute); font-size:12px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis }
+  .credit { display:block; padding:14px; color:var(--mute); font-size:11px; text-decoration:none; border-top:1px solid var(--line) } .credit:hover { color:var(--accent) }
+  .badge { display:inline-block; min-width:18px; text-align:center; font-size:11px; font-weight:700; color:#fff; background:var(--bad); border-radius:9px; padding:0 6px; margin-left:6px }
+  /* badges */
+  .st { font-size:11px; border:1px solid var(--line); border-radius:3px; padding:0 7px; margin-left:auto; white-space:nowrap }
+  .st.running, .st.fixing { color:var(--run); border-color:var(--run) } .st.done, .st.ready-for-mr, .st.ready-to-close { color:var(--ok); border-color:var(--ok) }
+  .st.FAIL, .st.blocked { color:var(--bad); border-color:var(--bad) } .st.findings, .st.clarify, .st.mr-unchecked { color:var(--warn); border-color:var(--warn) }
+  /* waiting on you */
+  .waiting { margin-top:14px; background:linear-gradient(90deg, rgba(245,165,36,.08), transparent); border:1px solid rgba(245,165,36,.35); border-radius:4px; padding:4px 12px 12px }
+  .cards { display:grid; gap:8px }
+  .alert { background:var(--card); border:1px solid var(--line); border-left:4px solid var(--warn); border-radius:4px; padding:10px 12px; overflow-wrap:anywhere }
+  .alert.question { border-left-color:var(--run) } .alert.permission, .alert.FAIL { border-left-color:var(--bad) } .alert.done, .alert.ready-for-mr { border-left-color:var(--ok) }
+  .alert .head { display:flex; align-items:center; gap:8px; flex-wrap:wrap }
+  .alert .q { margin:8px 0 2px; font-weight:600 } .alert label { display:block; margin:2px 0 2px 8px; cursor:pointer } .alert .opt-d { color:var(--mute); font-size:12px }
+  .actions { display:flex; flex-wrap:wrap; gap:8px; margin-top:8px; align-items:center }
+  .action { margin-top:6px }
+  .cmd { display:flex; gap:6px; align-items:flex-start; margin-top:6px }
+  .cmd .k { color:var(--mute); font-size:12px; white-space:nowrap; padding-top:4px }
+  .cmd code { flex:1; min-width:0; font:12px var(--mono); background:#05080f; color:#cfe8ff; border:1px solid var(--line); border-radius:3px; padding:4px 8px; overflow-wrap:anywhere; user-select:all }
+  :root[data-theme="light"] .cmd code { background:#0f1726; color:#e6f1ff }
+  @media (max-width: 760px) { .cmd { flex-wrap:wrap } .cmd .k { width:100% } }
+  /* task state */
+  .statebox { background:var(--card); border:1px solid var(--line); border-radius:4px; padding:10px 12px; margin:10px 0; box-shadow:var(--glow) }
+  .statebox .st { margin-left:0 } .next { margin:6px 0 } .next b { color:var(--fg) }
+  .purpose { color:var(--mute); white-space:pre-wrap; margin:0; font:inherit }
+  @keyframes bob { 50% { transform:translateY(-3px) } }
+  @keyframes wave { 0%,100% { transform:rotate(-12deg) } 50% { transform:rotate(14deg) } }
+  .pop { margin-top:10px; background:var(--card); border:1px solid var(--accent); border-radius:6px; padding:10px 12px; box-shadow:var(--glow) }
+  .pop .head { display:flex; gap:10px; align-items:center } .pop .detail { font-size:12px; overflow-wrap:anywhere; margin-top:4px }
+  /* robots */
+  .bot .head { fill:var(--card2); stroke:var(--role); stroke-width:1.6 } .bot .visor { fill:#05080f } :root[data-theme="light"] .bot .visor { fill:#1d2738 }
+  .bot .eyes circle { fill:var(--role) } .bot .eye-line { fill:none; stroke:var(--role); stroke-width:1.6; stroke-linecap:round } .bot .antenna { fill:var(--role) }
+  .bot.idle, .bot.stale { opacity:.55 } .bot.failed .head, .bot.blocked .head { stroke:var(--bad) } .bot.failed .eye-line, .bot.blocked .eye-line { stroke:var(--bad) }
+  .bot.running .antenna { animation:blink 1.1s steps(2) infinite } .bot.running .eyes { animation:scan 1.8s ease-in-out infinite }
+  @keyframes blink { 50% { opacity:.15 } } @keyframes scan { 0%,100% { transform:translateX(-1.6px) } 50% { transform:translateX(1.6px) } }
+  @media (prefers-reduced-motion: reduce) { .bot.running .antenna, .bot.running .eyes, .seat.running svg, .bubble.hand, .brand .logo .pulse { animation:none } .floor .token { transition:none } }
+  /* findings */
+  .fsum { display:flex; flex-wrap:wrap; gap:6px; margin:0 0 10px }
+  .fstate { font-size:11px; border:1px solid var(--line); border-radius:3px; padding:0 7px; white-space:nowrap }
+  .fstate.needs-you { color:var(--warn); border-color:var(--warn) } .fstate.agent, .fstate.fixing { color:var(--run); border-color:var(--run) } .fstate.fixed, .fstate.accepted { color:var(--ok); border-color:var(--ok) }
+  .fcards { display:grid; grid-template-columns:repeat(auto-fill,minmax(320px,1fr)); gap:10px }
+  .fcard { background:linear-gradient(180deg, var(--card2), var(--card)); border:1px solid var(--line); border-left:3px solid var(--line); border-radius:4px; padding:10px 12px }
+  .fcard.needs-you { border-left-color:var(--warn); box-shadow:var(--glow) } .fcard.agent, .fcard.fixing { border-left-color:var(--run) } .fcard.fixed, .fcard.accepted { border-left-color:var(--ok); opacity:.8 }
+  .fhead { display:flex; align-items:center; gap:8px; flex-wrap:wrap } .fhead .fstate { margin-left:auto }
+  .sev { font-size:11px; color:var(--mute) } .sev.critical, .sev.high { color:var(--bad) } .sev.medium { color:var(--warn) }
+  .ftext { margin:6px 0; overflow-wrap:anywhere } .factor { color:var(--mute); font-size:12px }
+  /* files, rulings, events */
+  .pipe { display:flex; flex-wrap:wrap; gap:6px; align-items:center }
+  .chip { display:inline-flex; align-items:center; gap:6px; border-radius:3px; background:var(--card2) }
+  .chip.ok, .chip.PASS { border-color:var(--ok); color:var(--ok) } .chip.running { border-color:var(--run); color:var(--run) }
+  .chip.FAIL, .chip.failed, .chip.blocked { border-color:var(--bad); color:var(--bad) } .chip.PASS_WITH_FINDINGS { border-color:var(--warn); color:var(--warn) } .chip.pending { color:var(--mute) }
+  pre.file { background:var(--card); border:1px solid var(--line); border-radius:4px; padding:12px; white-space:pre-wrap; overflow-wrap:anywhere; max-height:60vh; overflow:auto }
+  .rulings div { overflow-wrap:anywhere; font-size:12px; padding:3px 0; border-top:1px dashed var(--line) }
+  table { border-collapse:collapse; width:100% } td { border-top:1px solid var(--line); padding:4px 6px; vertical-align:top; font-size:12px } td.d { overflow-wrap:anywhere }
+  dialog { background:var(--card); color:var(--fg); border:1px solid var(--line); border-radius:6px; width:min(760px,96vw); max-height:90vh; overflow:auto; padding:16px }
+  dialog::backdrop { background:rgba(0,0,0,.5) } dialog h3 { margin:0 0 8px; font-size:15px; color:var(--accent) }
+  dialog .target { border-top:1px solid var(--line); padding:8px 0 } dialog label { display:block; margin:6px 0 2px } dialog ul { margin:2px 0 4px 22px; padding:0; font-size:12px; overflow-wrap:anywhere }
+
+  /* "Now": the one verb for the dev */
+  .where { display:flex; flex-wrap:wrap; gap:4px; align-items:center; font-size:12px; color:var(--mute); margin-top:2px }
+  .crumb::after { content:"›"; margin:0 4px; color:var(--line) } .crumb.here { color:var(--accent); font-weight:600 } .crumb.here::after { content:"" }
+  .now { display:grid; grid-template-columns:150px minmax(0,1fr); border-radius:6px; margin:12px 0 4px; overflow:hidden; border:1px solid var(--line) }
+  .now .verb { display:flex; align-items:center; justify-content:center; font-size:18px; font-weight:800; letter-spacing:.08em; line-height:1.3; text-align:center; padding:12px }
+  .now.act { border-color:var(--warn); box-shadow:var(--glow) } .now.act .verb { background:var(--warn); color:#111 }
+  .now.wait .verb { background:rgba(76,201,240,.15); color:var(--run) }
+  .nowbody { padding:10px 12px; display:grid; gap:8px; background:var(--card) } .nowhead .st { margin-left:0 }
+  .who { display:flex; align-items:center; gap:8px } .extra { font-size:12px }
+  @media (max-width: 700px) { .now { grid-template-columns:1fr } .now .verb { font-size:16px; padding:6px } }
+  .tabs { display:flex; gap:6px; margin:16px 0 8px } .tabs button.on { border-color:var(--accent); color:var(--accent) }
+  /* the steps as a tree */
+  .tree, .tree ul { list-style:none; margin:0; padding:0 } .tree ul { margin-left:18px; border-left:1px dashed var(--line); padding-left:10px }
+  .tree .row { display:flex; align-items:center; gap:8px; padding:4px 6px; border-radius:4px } .tree .row.click, .tree li > .row[data-node] { cursor:pointer }
+  .tree .row:hover { background:var(--sel) } .tree .g { width:14px; text-align:center }
+  .node.ok > .row .g { color:var(--ok) } .node.todo > .row { opacity:.6 } .node.cur > .row { background:var(--sel); box-shadow:inset 3px 0 0 var(--accent) }
+  .node.bad > .row .g, .node.bad > .row b { color:var(--bad) } .node.warn > .row b { color:var(--warn) } .node.run > .row b { color:var(--run) }
+  .you { margin-left:auto; font-size:10px; font-weight:700; letter-spacing:.1em; color:#111; background:var(--accent); border-radius:3px; padding:1px 6px }
+  .count { font-size:10px; background:var(--warn); color:#111; border-radius:8px; padding:0 6px; font-weight:700 }
+  .kids { margin:2px 0 6px 30px; display:grid; gap:6px } .kids.fsum { display:flex; flex-wrap:wrap } .tree pre.file { margin:4px 0 8px 30px }
+  .finding { background:var(--card); border:1px solid var(--line); border-left:3px solid var(--line); border-radius:4px; padding:6px 10px }
+  .finding.needs-you { border-left-color:var(--warn) } .finding.agent, .finding.fixing { border-left-color:var(--run) } .finding.fixed, .finding.accepted { border-left-color:var(--ok); opacity:.8 }
+  .finding .fhead { display:flex; gap:8px; align-items:baseline; flex-wrap:wrap } .finding .fstate { margin-left:auto }
+  /* the office, a floor plan */
+  .plan { overflow-x:auto } .floor { position:relative; min-width:760px; max-width:1040px; margin:0 auto; aspect-ratio:1000/600; border-radius:8px; overflow:hidden; border:1px solid var(--line) }
+  .floor-svg { position:absolute; inset:0; width:100%; height:100% }
+  :root { --corr1:#24211c; --corr2:#2e2a23; --wall:#55504a; --fr1:#123056; --fr2:#2a5590; --fw1:#34373c; --fw2:#3f4247; --fv1:#26332d; --fv2:#31423a; --fd1:#3d3022; --fd2:#4a3a29;
+          --desk:#6b5236; --sheet:#dce9f8; --ink:#2a5590; --tool:#e8833a; --brick:#a4553a; --cone:#f07c22; --hazard:#f2b705; --hat-boss:#f4f3ee }
+  :root[data-theme="light"] { --corr1:#e2d6bf; --corr2:#d6c8ad; --wall:#8a8174; --fr1:#2f5f9e; --fr2:#5b86c4; --fw1:#c9cbce; --fw2:#bcbec2; --fv1:#cfe1d5; --fv2:#bad3c2; --fd1:#e8cd9b; --fd2:#d9b97f;
+          --desk:#9b7447; --sheet:#ffffff; --ink:#2f5f9e; --tool:#e8833a; --brick:#b9603f; --cone:#f07c22; --hazard:#f2b705; --hat-boss:#ffffff }
+  /* a room's name is a site sign: yellow board, dark letters */
+  .rlabel { position:absolute; font-size:11px; font-weight:700; letter-spacing:.02em; color:#1d1a14; background:var(--hazard); border:2px solid #1d1a14; border-radius:3px; padding:0 9px; box-shadow:0 2px 0 rgba(0,0,0,.35) }
+  .rlabel.here { outline:2px solid var(--accent); outline-offset:2px }
+  .seat { position:absolute; transform:translate(-50%,-62%); display:flex; flex-direction:column; align-items:center; gap:2px; background:none; border:0; padding:0 }
+  .seat.running svg { animation:bob 1.2s ease-in-out infinite } .seat.open svg { filter:drop-shadow(0 0 8px var(--accent)) }
+  .tag { display:inline-flex; align-items:center; gap:5px; font-size:10px; color:#fff; background:rgba(20,24,36,.88); border-radius:10px; padding:1px 8px; white-space:nowrap }
+  .dot { width:7px; height:7px; border-radius:50%; background:#8b98ad } .dot.running { background:var(--run) } .dot.ok { background:var(--ok) } .dot.failed, .dot.blocked { background:var(--bad) }
+  .bubble { position:absolute; top:16px; right:-16px; left:auto; width:auto; line-height:1.4; background:#fff; color:#111; font-weight:800; border-radius:10px; padding:0 6px; font-size:12px; box-shadow:0 2px 6px rgba(0,0,0,.35) }
+  .bubble.hand { background:var(--accent); animation:wave 1s ease-in-out infinite }
+  .floor .token { position:absolute; transform:translate(-50%,-50%); background:#fff8c5; color:#3b3200; font-weight:700; font-size:11px; border-radius:3px; padding:2px 8px; box-shadow:0 4px 12px rgba(0,0,0,.35); transition:left .9s cubic-bezier(.6,.05,.3,1), top .9s cubic-bezier(.6,.05,.3,1); white-space:nowrap }
+
+  :root { --hand-line:#3b2a00 } :root[data-theme="light"] { --hand-line:#5a3d00 }
+  .hand-ico { vertical-align:-3px; filter:drop-shadow(0 0 4px rgba(245,165,36,.55)) }
+  .bubble.hand { background:#fff3d6; padding:2px 3px; border-radius:50%; line-height:0; box-shadow:0 0 0 0 rgba(245,165,36,.6); animation:wave 1.1s ease-in-out infinite, ring 1.6s ease-out infinite }
+  @keyframes ring { 0% { box-shadow:0 0 0 0 rgba(245,165,36,.55) } 100% { box-shadow:0 0 0 12px rgba(245,165,36,0) } }
+
+  .switches { display:flex; flex-wrap:wrap; gap:8px; align-items:center; border-top:1px dashed var(--line); padding-top:8px; font-size:12px }
+  .switch { display:inline-flex; align-items:center; gap:6px; font-size:12px } .switch i { width:26px; height:14px; border-radius:7px; background:var(--line); position:relative }
+  .switch i::after { content:""; position:absolute; top:2px; left:2px; width:10px; height:10px; border-radius:50%; background:var(--mute); transition:left .2s }
+  .switch.on i { background:rgba(61,220,151,.35) } .switch.on i::after { left:14px; background:var(--ok) } .switch.on b { color:var(--ok) }
+
+  .dismiss { float:right; border:0; background:none; color:var(--mute); font-size:16px; line-height:1; padding:0 4px } .dismiss:hover { color:var(--fg) }
+  .dismissed { margin-top:8px } .dismissed > summary { font-size:12px } .dismissed .alert { opacity:.7; margin-top:6px }
+</style>
+</head>
+<body>
+<div class="app">
+<aside><div class="side-h" data-i18n="side.tasks">Tasks</div><div id="tasks"><div class="meta" style="padding:0 14px" data-i18n="loading">Loading…</div></div><a class="credit" href="https://github.com/yantadeu/foreman" target="_blank" rel="noopener" data-i18n="brand.credit">Foreman by Yan Tadeu · Apache-2.0</a></aside>
+<main>
+<header class="brand"><svg class="logo" viewBox="0 0 64 64" aria-hidden="true"><rect x="10" y="23" width="44" height="34" rx="10" fill="#121826" stroke="#f5a524" stroke-width="3"/><path d="M7 27h50a2.5 2.5 0 0 0 0-5h-3.5C53.5 11.5 44 4 32 4S10.5 11.5 10.5 22H7a2.5 2.5 0 0 0 0 5z" fill="#f5a524"/><rect x="28.5" y="4.5" width="7" height="16" rx="2.5" fill="#c97f00"/><rect x="16" y="32" width="32" height="15" rx="5" fill="#070b14"/><path class="pulse" d="M19 40h6l3-5.5 4.5 11 3-5.5h9.5" fill="none" stroke="#4cc9f0" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"/><rect x="24" y="50" width="16" height="3" rx="1.5" fill="#f5a524" opacity=".55"/></svg><div class="bname"><b>FOREMAN</b><span data-i18n="brand.tag">mission control for coding agents</span></div>
+<div class="controls">
+  <span class="live" id="live"></span>
+  <button id="lang-btn" type="button"></button>
+  <button id="notify-btn" type="button"></button>
+  <span id="notify-state"></span>
+  <button id="mute-btn" type="button"></button>
+  <button id="theme-btn" type="button"></button>
+</div></header>
+<section class="waiting" id="waiting" hidden>
+<h2 id="waiting-title" data-i18n="waiting.title">Waiting on you</h2>
+<div class="cards" id="attn"></div>
+<div class="cards" id="todo" style="margin-top:8px"></div>
+</section>
+<div class="meta" id="legend" style="margin-top:10px"></div>
+<h1 id="title">Foreman</h1>
+<div class="where" id="where"></div>
+<div id="now"></div>
+<div id="body" hidden>
+<div class="tabs"><button type="button" data-tab="tree" data-i18n="tab.tree">Steps</button><button type="button" data-tab="office" data-i18n="tab.office">Office</button></div>
+<div id="tree"></div>
+<div id="plan" class="plan" hidden></div>
+<h2 data-i18n="h.rulings">Decisions taken without you</h2><div class="rulings" id="rulings"></div>
+<details id="events"><summary id="events-sum"></summary><table id="feed"></table></details>
+</div>
+</main>
+</div>
+<dialog id="dlg"></dialog>
+<script>
+// Every user-facing text of the page, in English and Portuguese. Strict JSON between the markers:
+// test_page.py parses it. Code, statuses and API values stay English; what the dev reads goes
+// through t(), and every name (agent, verdict, event, lens) through word().
+const I18N = /* i18n:begin */{
+ "en": {
+  "lang.button": "PT / EN",
+  "lang.title": "Switch the page to Portuguese",
+  "side.tasks": "Tasks",
+  "loading": "Loading…",
+  "here": "here",
+  "pending.badge": "items waiting on you",
+  "no.task": "No task yet. Start one with <code>work.sh init &lt;ID&gt;</code>.",
+  "no.task.any": "No task in any worktree. Start one with <code>work.sh init &lt;ID&gt;</code>.",
+  "dashboard.error": "dashboard error: {msg}",
+  "outdated": "dashboard out of date: restart it (work.sh ui stop && work.sh ui start)",
+  "waiting.title": "Waiting on you",
+  "waiting.none": "Nothing waits on you right now.",
+  "legend.more": "About the alerts",
+  "legend.text": "Alerts come from the Claude Code hooks; whether a foreground subagent's permission prompt raises one is not measured yet. A permission alert can stay up while the approved tool runs, until that agent's next tool call or your next prompt.",
+  "notify.enable": "Enable notifications",
+  "notify.on": "notifications: on",
+  "notify.off": "notifications: off",
+  "notify.blocked": "notifications: blocked by the browser (allow them in the site settings)",
+  "notify.unsupported": "notifications: not supported by this browser",
+  "sound.on": "Sound: on",
+  "sound.off": "Sound: off",
+  "copy": "Copy",
+  "copy.done": "Copied",
+  "copy.failed": "Select the text and copy it",
+  "cmd.shell": "In a terminal:",
+  "cmd.prompt": "In a Claude session of {wt}:",
+  "kind.question": "question",
+  "kind.question.m": "A session asked you something and is waiting for the answer.",
+  "kind.permission": "permission",
+  "kind.permission.m": "A session wants to run a tool and waits for your approval.",
+  "kind.turn": "your turn",
+  "kind.turn.m": "A session finished its turn and waits for your next message.",
+  "alert.main": "main session",
+  "alert.agent": "agent {id}",
+  "alert.since": "since {time}",
+  "alert.other": "Other:",
+  "alert.send": "Send answer",
+  "alert.release": "Answer in the terminal",
+  "alert.sent": "sent",
+  "action.answer-on-page": "What to do: answer here and press the send button, or answer in the terminal of session {session} in {wt}.",
+  "action.answer-in-terminal": "What to do: answer in the terminal of session {session} in {wt}. This question is not held for the page (the page was closed when it was asked, or it was released).",
+  "action.answer-in-terminal-or-enable": "What to do: answer in the terminal of session {session} in {wt}. Web answers are off there; to answer the next questions on this page, run this yourself (in a terminal, or with ! in Claude Code). Only questions asked after it can be answered here.",
+  "action.approve-in-terminal": "What to do: approve or deny in the terminal of session {session} in {wt}.",
+  "action.prompt-session": "What to do: session {session} in {wt} waits for your next message in its terminal.",
+  "action.open-session": "The memory review of {id} waits for a session in {wt}. The command below opens one there with the message already in it.",
+  "action.fix-mr-check": "PR/MR check failed in {wt} ({error}): {ids} cannot be seen as done by its PR or MR. Restart the dashboard with a token for the forge (replace &lt;your token&gt;), or use Mark as done if there is nothing to find.",
+  "todo.clean": "{n} done task(s) can be cleaned up: {ids}. Press the button, or run work.sh cleanup &lt;ID&gt; in that worktree.",
+  "todo.open": "Open",
+  "status.running": "Running",
+  "status.running.m": "An agent is working on this task right now.",
+  "status.blocked": "Blocked",
+  "status.blocked.m": "An agent stopped without writing its file correctly; the session usually sends it back.",
+  "status.FAIL": "Failed",
+  "status.FAIL.m": "A review gave FAIL, or a stage failed its check. The task does not move on until someone decides.",
+  "status.findings": "Findings to decide",
+  "status.findings.m": "Some reviews found something and not every finding is decided: you choose which get fixed.",
+  "status.ready-for-mr": "Ready for PR/MR",
+  "status.ready-for-mr.m": "Reviews are in and the findings are decided: the next step is the pull or merge request.",
+  "status.done": "Done",
+  "status.done.m": "A pull or merge request is open or merged for this branch, git shows it merged, or the task was marked as done.",
+  "status.purpose": "Purpose only",
+  "status.purpose.m": "Only the purpose is written: the interview or the contract comes next.",
+  "status.stage": "Paused after {stage}",
+  "status.stage.m": "The last file written is the {stage} one and no agent is running: the flow continues in the session.",
+  "status.mr-unchecked": "PR/MR check failed",
+  "status.mr-unchecked.m": "Reviews are in, but the page could not ask the forge whether a PR or MR exists: it does not know if the task is delivered.",
+  "status.ready-to-close": "Ready to close",
+  "status.ready-to-close.m": "Reviews are in and decided, and this branch has no PR or MR to find (base branch, detached, or a forge with neither API): mark it as done when delivered.",
+  "next.label": "Next step:",
+  "next.contract": "The refiner writes the contract next. If the session is waiting on you, finish the interview there.",
+  "next.change": "The executor implements the contract next, in the session.",
+  "next.proof": "The tester proves the change next, in the session.",
+  "next.reviews": "The reviews (contract, security, QA, product) come next, in the session.",
+  "next.wait": "Wait. The agents are working; nothing to do unless something shows up under \"Waiting on you\".",
+  "next.unblock": "Look at the blocked agent below. If the session does not send it back on its own, tell the session.",
+  "next.fix-fail": "Read the review with FAIL (stage files below) and tell the session whether to fix it.",
+  "next.decide-findings": "Decide each finding in Findings below (fix or accept), or answer the question in the session.",
+  "next.open-mr": "Open the pull or merge request for this branch; the task reads done as soon as the forge has it.",
+  "next.fix-mr-check": "The PR/MR lookup failed ({error}), so the page cannot tell whether one exists. Restart the dashboard with a token for the forge (replace &lt;your token&gt;). If the task has nothing to deliver, use Mark as done.",
+  "next.mark-done": "This branch has no PR or MR to find (base branch, detached, or a forge with neither API). When the work is delivered, press Mark as done or run the command.",
+  "next.clean-up": "Nothing to deliver. When you no longer need the task, press Clean up or run the command.",
+  "mr.link": "PR/MR #{iid} ({state})",
+  "mr.opened": "open",
+  "mr.merged": "merged",
+  "mr.unavailable": "PR/MR check unavailable: the forge did not answer or refused the token. Until it works, the task cannot read as done by its PR or MR.",
+  "mr.no-token": "PR/MR check unavailable: no GitLab token (set GITLAB_TOKEN, or put it in the origin URL).",
+  "mr.unsupported-remote": "PR/MR check unavailable: the origin remote is neither GitHub nor GitLab. Close the task with Mark as done.",
+  "mr.host-not-allowed": "PR/MR check unavailable: the origin host is not an allowed forge host, so the token is not sent there (set FORGE_HOST, or forge_hosts in flow.json).",
+  "mr.error": "PR/MR check unavailable ({error}).",
+  "warning.fail-unresolved": "FAIL not resolved: a review gave FAIL and the task was closed anyway.",
+  "closed.work.sh": "Marked as done (work.sh done or the page).",
+  "h.timeline": "Where it is",
+  "h.files": "Stage files",
+  "h.agents": "Agents",
+  "h.events": "Recent events ({n})",
+  "h.findings": "Findings",
+  "findings.count": "{open} open of {total}",
+  "findings.reason.no-decision": "Why it reads \"findings\": no decision recorded yet (findings-decision.md does not exist).",
+  "findings.reason.decision-without-date": "Why it reads \"findings\": findings-decision.md exists but does not start with \"Decided:\", so it does not count.",
+  "findings.reason.review-newer": "Why it reads \"findings\": these reviews ran again after the last decision: {lenses}. Decide again.",
+  "findings.lens": "review",
+  "findings.severity": "severity",
+  "findings.summary": "finding",
+  "findings.decision": "decision",
+  "dec.fix": "to fix",
+  "dec.accepted": "accepted",
+  "dec.open": "open",
+  "sev.critical": "critical",
+  "sev.high": "high",
+  "sev.medium": "medium",
+  "sev.low": "low",
+  "sev.info": "info",
+  "sev.unknown": "not stated",
+  "tl.purpose": "purpose",
+  "tl.contract": "contract",
+  "tl.change": "change",
+  "tl.proof": "proof",
+  "tl.reviews": "reviews {n}/{total}",
+  "tl.decision": "findings decision",
+  "tl.decision.none": "no findings",
+  "tl.closed": "closed",
+  "file.missing": "{file} not written yet.",
+  "lane.state.running": "running",
+  "lane.state.ok": "finished",
+  "lane.state.failed": "failed its check",
+  "lane.state.blocked": "blocked",
+  "lane.state.stale": "no news for 15 min (session gone?)",
+  "lane.state.idle": "idle",
+  "lane.took": "took {s}s",
+  "lane.since": "since {ago}",
+  "lane.more": "details",
+  "lane.id": "agent id {id} · {tools} tool calls · seen {ago} ago",
+  "lane.none": "No agent to follow right now.",
+  "lane.main": "Main session: {state}, {tools} tool calls, last seen {ago} ago.",
+  "close.button": "Mark as done",
+  "close.title": "Mark {id} as done",
+  "close.intro": "This writes the closed marker, the same as work.sh done {id}. The task then reads done and can be cleaned up. Nothing is deleted.",
+  "close.warn.fail": "A review gave FAIL and it is not resolved: the task will read done with a \"FAIL not resolved\" warning.",
+  "close.warn.open-findings": "{n} finding(s) are not decided: closing records nothing about them.",
+  "close.warn.running": "An agent is still running on this task.",
+  "close.confirm": "Mark as done",
+  "close.ok": "Marked as done. You can clean it up now.",
+  "clean.button": "Clean up",
+  "clean.all": "Clean up all done",
+  "clean.title": "Clean up",
+  "clean.title.all": "Clean up all done tasks",
+  "clean.intro": "Pick what to delete. Only what is listed and checked here is deleted; nothing else.",
+  "clean.loading": "Reading what can be cleaned…",
+  "clean.empty": "Nothing to clean up.",
+  "clean.item.state": "Task state on disk",
+  "clean.item.worktree": "Worktree and its local branch",
+  "clean.item.memory": "Claude's memory of this task",
+  "clean.item.memory.m": "The dashboard cannot tell which memory entries belong to the task: the worktree's session asks you on its next prompt and deletes only the ones you check.",
+  "clean.refused": "Not possible: {reason}",
+  "clean.recreate": "To work on review fixes later, recreate it:",
+  "clean.confirm": "Delete what is checked",
+  "clean.cancel": "Close",
+  "clean.none.checked": "Check at least one item.",
+  "clean.ok": "Cleaned up.",
+  "clean.partial": "Some items were not cleaned (the rest was):",
+  "clean.key.paths": "deletes",
+  "clean.key.path": "worktree folder",
+  "clean.key.branch": "local branch deleted",
+  "clean.key.branch.kept": "branch {branch} stays: it is a base branch, only the folder goes",
+  "clean.key.tasks": "tasks in it",
+  "clean.key.request": "request file",
+  "clean.key.session_worktree": "asked by the session of",
+  "clean.key.session_worktree_if_removed": "if that worktree is removed, by the session of",
+  "clean.key.ignored": "{n} git-ignored file(s) go with the folder",
+  "clean.key.sensitive": "files that look like secrets or another task's state (move or delete them yourself first):",
+  "clean.cancels.memory": "This includes the pending memory request of this task: check the memory item too to ask the session again.",
+  "refuse.no-remote-branch": "the branch has no remote branch",
+  "refuse.main-worktree": "it is the repository's main worktree",
+  "refuse.serving-worktree": "it is the worktree this dashboard runs from",
+  "refuse.other-task-not-done": "another task in this worktree is not done",
+  "refuse.no-such-task": "the task no longer exists",
+  "refuse.detached": "the worktree is on a detached HEAD (no branch to recreate it from)",
+  "refuse.live-session": "a Claude session is live in this worktree (open, waiting on you, or active in the last 15 min); close it first",
+  "refuse.sensitive-files": "it holds git-ignored files that look like secrets, or another task's state, which would be lost",
+  "refuse.not-done": "the task is not done",
+  "refuse.dirty": "the worktree has uncommitted or untracked changes",
+  "refuse.unpushed": "the branch has commits that are on no remote",
+  "refuse.hand": "If the branch was squash-merged and its remote branch deleted, remove it by hand after checking: git worktree remove &lt;path&gt; and git branch -D &lt;branch&gt;.",
+  "err.bad-body": "The page sent a request the server does not accept. Reload the page.",
+  "err.empty": "Nothing was picked, so nothing was done.",
+  "err.plan-changed": "Something changed since this list was shown (a file, a commit or a task status): nothing was deleted. Open it again.",
+  "err.refused": "The server refused an item that this list showed as possible: nothing was deleted. Open it again to see why.",
+  "err.no-such-task": "The task no longer exists.",
+  "err.already-done": "The task is already done.",
+  "err.http": "The server answered HTTP {status}.",
+  "err.raw": "server message",
+  "mr.link.git": "merged into the base (seen by git)",
+  "status.clarify": "Open questions",
+  "status.clarify.m": "A stage left [NEEDS CLARIFICATION] markers: the executor cannot start until you answer them.",
+  "next.clarify": "Answer the open questions in the session, one at a time; the answers go into the purpose.",
+  "h.rulings": "Decisions taken without you",
+  "rulings.none": "No decision taken without you.",
+  "where.extra": "lane {lane} · fix round {rounds}/{max} · {clarified} question(s) answered",
+  "clean.no-retro": "No retrospective yet: what this task taught goes with its state. Run the retrospective first.",
+  "theme.to-light": "light",
+  "theme.to-dark": "dark",
+  "theme.title": "Switch the theme",
+  "tl.retro": "retrospective",
+  "brand.tag": "mission control for coding agents",
+  "role.refiner": "refiner",
+  "role.executor": "executor",
+  "role.tester": "tester",
+  "role.reviewer": "contract reviewer",
+  "role.security-reviewer": "security reviewer",
+  "role.qa-reviewer": "QA reviewer",
+  "role.product-reviewer": "product reviewer",
+  "role.retrospective": "retrospective",
+  "role.main": "main session",
+  "role.foreman": "foreman",
+  "verdict.PASS": "approved",
+  "verdict.PASS_WITH_FINDINGS": "approved with findings",
+  "verdict.FAIL": "failed",
+  "verdict.DONE": "done",
+  "verdict.DONE_WITH_CONCERNS": "done with concerns",
+  "verdict.NEEDS_CONTEXT": "needs context",
+  "verdict.BLOCKED": "blocked",
+  "ev.start": "started",
+  "ev.stop": "finished",
+  "ev.tool": "tool call",
+  "ev.blocked": "sent back",
+  "ev.refused": "refused",
+  "lens.contract": "contract",
+  "lens.security": "security",
+  "lens.qa": "QA",
+  "lens.product": "product",
+  "prompt.decide-findings": "decide the findings of {id}",
+  "h.crew": "Crew",
+  "ruling.why": "why:",
+  "ruling.cost": "cost if wrong:",
+  "fstate.needs-you": "your decision",
+  "fstate.agent": "agent fixes it",
+  "fstate.fixing": "being fixed",
+  "fstate.fixed": "fixed",
+  "fstate.accepted": "accepted",
+  "fstate.needs-you.m": "A review approved the change with this finding. Only you move it: fix it or accept it as it is.",
+  "fstate.reopened.m": "You asked for a fix, but the new review still reports it. Decide again.",
+  "fstate.capped.m": "The review failed and the fix rounds are used up: the agents stopped, the decision is yours.",
+  "fstate.agent.m": "The review failed: the {agent} fixes it on its own in the fix loop, then the review runs again.",
+  "fstate.fixing.m": "You asked for a fix: the {agent} is on it, then the review runs again.",
+  "fstate.accepted.m": "Accepted as it is; recorded in the purpose with the date.",
+  "fstate.fixed.m": "Fixed: the new review no longer reports it.",
+  "fcount.needs-you": "{n} waiting for you",
+  "fcount.agent": "{n} the agents fix",
+  "fcount.fixing": "{n} being fixed",
+  "fcount.fixed": "{n} fixed",
+  "fcount.accepted": "{n} accepted",
+  "fpick.fix": "Fix it (goes back to the {agent})",
+  "fpick.accept": "Accept as it is",
+  "fpick.reason": "reason (optional)",
+  "fpick.send": "Send the decision ({n} finding(s))",
+  "fpick.missing": "Pick fix or accept for every finding that waits for you.",
+  "fpick.sent": "Decision recorded. The session in {wt} applies it on your next message there: send it any message (for example the one below).",
+  "prompt.apply-findings": "apply the findings decision of {id}",
+  "err.undecided": "Every finding that waits for you needs a decision.",
+  "status.fixing": "Being fixed",
+  "status.fixing.m": "You decided the findings on the page: the agents fix the ones you picked, then the reviews run again.",
+  "next.wait-fixes": "Wait for the fixes. If the session has not started them, send it a message in {wt}.",
+  "next.fix-loop": "Nothing to do: the fix loop is on the failed review (see Findings), then the review runs again.",
+  "brand.credit": "Foreman by Yan Tadeu · Apache-2.0",
+  "brand.sub": "agent operations console",
+  "decide.accepted.m": "Writes \"accepted\" for this finding in findings-decision.md. The finding moves to \"Accepted\" and is not fixed.",
+  "decide.confirm": "Confirm",
+  "decide.fix.m": "Writes \"fix\" for this finding in findings-decision.md. The finding moves to \"Agent fixing\", and the agent fixes it in the next fix round.",
+  "decide.title.accepted": "Accept this finding?",
+  "decide.title.fix": "Fix this finding?",
+  "decision.recorded": "Decision recorded. The session in {wt} applies it on its next message there: send it the message below, or start a session with the second command.",
+  "dismiss": "Dismiss this alert",
+  "dismiss.restore": "Show again",
+  "dismissed.count": "Dismissed ({n})",
+  "err.no-such-finding": "This finding no longer exists: its review changed. The list is up to date now; decide again.",
+  "err.not-open": "This finding was already decided, here or in a session. The list is up to date now.",
+  "fgroup.accepted": "Accepted",
+  "fgroup.accepted.m": "Kept as they are, without a fix. Nothing to do.",
+  "fgroup.empty": "None.",
+  "fgroup.fix-pending": "Agent fixing",
+  "fgroup.fix-pending.m": "You chose to fix these. Next comes the fix round: executor, tester and the reviews again. When it ends, the agent marks each one it fixed, and any new finding comes back to \"You decide\".",
+  "fgroup.fixed": "Fixed",
+  "fgroup.fixed.m": "The fix round ended and the agent marked these as fixed. Nothing to do.",
+  "fgroup.open": "You decide",
+  "fgroup.open.m": "These findings wait for you. For each one press Fix (the agent fixes it in the next fix round) or Accept (it stays as it is, recorded as accepted). Nothing is written until you confirm.",
+  "finding.accept": "Accept",
+  "finding.fix": "Fix",
+  "findings.reason.some-open": "Why it reads \"findings\": findings-decision.md decides only some findings; the ones marked open below still need a decision.",
+  "fstate.fix-pending": "fix pending",
+  "fstate.open": "open",
+  "lane.last": "last action {ago} ago",
+  "lane.tools": "{n} tool calls",
+  "live.connecting": "connecting…",
+  "prompt.apply": "apply the findings decision of {id}",
+  "prompt.decide": "decide the findings of {id}",
+  "prompt.fail": "show the review with FAIL of {id} and propose the fix",
+  "prompt.unblock": "look at the blocked agent of {id} and send it back to finish its stage file",
+  "refuse.too-many-ignored": "it holds more than 200 git-ignored files, too many to list here; remove it by hand after checking them",
+  "session.none": "No session open there? This opens one already carrying the message:",
+  "theme.dark": "theme: dark",
+  "theme.light": "theme: light",
+  "theme.system": "theme: system",
+  "todo.findings.go": "Decide on the page",
+  "todo.findings.open": "{n} finding(s) wait for your decision.",
+  "h.office": "The site",
+  "h.purpose": "Purpose",
+  "room.refine": "Drafting room",
+  "room.refine.m": "The purpose becomes the blueprint (the contract); open questions come to you.",
+  "room.workshop": "Building site",
+  "room.workshop.m": "The change is built and proven by tests that bite.",
+  "room.review": "Inspection",
+  "room.review.m": "Four inspectors in parallel: contract, security, QA, product.",
+  "room.decision": "Site office",
+  "room.decision.m": "You sign off the findings and close; the retrospective keeps the learnings.",
+  "office.hand": "raised hand: it needs you, click the robot",
+  "pop.file": "writes {file}",
+  "pop.blocked": "It stopped without finishing its file and asks for context; the session usually sends it back.",
+  "pop.idle": "Not started for this task yet.",
+  "perm.held": "It wants to run {tool}. Allow or deny it here; the session waits for your answer.",
+  "perm.allow": "Allow",
+  "perm.deny": "Deny",
+  "turn.placeholder": "Your next message to the session",
+  "turn.send": "Send to the session",
+  "turn.off": "Replying from the page is off for {wt}. Turn it on with the command below, then the next turn waits here for your message.",
+  "alert.off": "Answering from the page is off for {wt}: answer this one in the terminal. To answer the next questions here, run the command below in a terminal.",
+  "action.approve-on-page": "Allow or deny it here.",
+  "action.reply-on-page": "Write your next message here.",
+  "prompt.memory": "review the auto memory of {id}",
+  "alert.notheld": "Not held for the page (it was closed when this was asked, or it was released): answer in the terminal.",
+  "now.act": "NEEDS YOU",
+  "now.wait": "WAIT",
+  "now.findings": "Decide {n} finding(s): fix or accept each one",
+  "tree.here": "YOU ARE HERE",
+  "tree.waiting": "not started",
+  "office.you": "You",
+  "fpick.sent.now": "Decision sent. The session in {wt} takes it right away if it is working or waiting for it; if it has stopped, the command below delivers it.",
+  "tab.tree": "Steps",
+  "tab.office": "Site",
+  "waiting.elsewhere": "Also waiting on you, in other tasks",
+  "lane.Light": "light",
+  "lane.Full": "full",
+  "lane.None": "none",
+  "switch.title": "Answer on this page:",
+  "switch.label.answers": "questions",
+  "switch.label.turns": "the session's turn",
+  "switch.on": "on",
+  "switch.off": "off",
+  "switch.about.answers": "When a session of this worktree asks you something, the question waits here for your answer while the page is open, instead of only in the terminal.",
+  "switch.about.turns": "When the main session of this worktree finishes its turn, it waits here for your next message while the page is open; what you write continues the session.",
+  "switch.risk": "Anything that can read this page's token, such as an agent with a shell, could also answer through it. Turn it on where that risk is acceptable.",
+  "switch.confirm.title.on": "Turn on: {what}",
+  "switch.confirm.title.off": "Turn off: {what}",
+  "switch.do.on": "Turn it on",
+  "switch.do.off": "Turn it off",
+  "switch.turn-on.answers": "Answer questions on this page",
+  "switch.turn-on.turns": "Reply to the session on this page",
+  "live.on": "live",
+  "live.off": "refreshing every 2 s"
+ },
+ "pt": {
+  "lang.button": "PT / EN",
+  "lang.title": "Mudar a página para inglês",
+  "side.tasks": "Tarefas",
+  "loading": "Carregando…",
+  "here": "aqui",
+  "pending.badge": "itens esperando por você",
+  "no.task": "Nenhuma tarefa ainda. Comece uma com <code>work.sh init &lt;ID&gt;</code>.",
+  "no.task.any": "Nenhuma tarefa em nenhum worktree. Comece uma com <code>work.sh init &lt;ID&gt;</code>.",
+  "dashboard.error": "erro no dashboard: {msg}",
+  "outdated": "dashboard desatualizado: reinicie (work.sh ui stop && work.sh ui start)",
+  "waiting.title": "Esperando por você",
+  "waiting.none": "Nada espera por você agora.",
+  "legend.more": "Sobre os alertas",
+  "legend.text": "Os alertas vêm dos hooks do Claude Code; ainda não foi medido se o pedido de permissão de um subagente em primeiro plano gera alerta. Um alerta de permissão pode continuar aparecendo enquanto a ferramenta aprovada roda, até a próxima chamada daquele agente ou a sua próxima mensagem.",
+  "notify.enable": "Ativar notificações",
+  "notify.on": "notificações: ligadas",
+  "notify.off": "notificações: desligadas",
+  "notify.blocked": "notificações: bloqueadas pelo navegador (libere nas configurações do site)",
+  "notify.unsupported": "notificações: este navegador não suporta",
+  "sound.on": "Som: ligado",
+  "sound.off": "Som: desligado",
+  "copy": "Copiar",
+  "copy.done": "Copiado",
+  "copy.failed": "Selecione o texto e copie",
+  "cmd.shell": "Num terminal:",
+  "cmd.prompt": "Numa sessão do Claude em {wt}:",
+  "kind.question": "pergunta",
+  "kind.question.m": "Uma sessão perguntou algo e espera a sua resposta.",
+  "kind.permission": "permissão",
+  "kind.permission.m": "Uma sessão quer rodar uma ferramenta e espera a sua aprovação.",
+  "kind.turn": "sua vez",
+  "kind.turn.m": "Uma sessão terminou a vez dela e espera a sua próxima mensagem.",
+  "alert.main": "sessão principal",
+  "alert.agent": "agente {id}",
+  "alert.since": "desde {time}",
+  "alert.other": "Outra:",
+  "alert.send": "Enviar resposta",
+  "alert.release": "Responder no terminal",
+  "alert.sent": "enviada",
+  "action.answer-on-page": "O que fazer: responda aqui e aperte o botão de enviar, ou responda no terminal da sessão {session} em {wt}.",
+  "action.answer-in-terminal": "O que fazer: responda no terminal da sessão {session} em {wt}. Esta pergunta não está retida para a página (a página estava fechada quando foi feita, ou foi liberada).",
+  "action.answer-in-terminal-or-enable": "O que fazer: responda no terminal da sessão {session} em {wt}. As respostas pela web estão desligadas lá; para responder as próximas nesta página, rode isto você mesmo (num terminal, ou com ! no Claude Code). Só as perguntas feitas depois disso podem ser respondidas aqui.",
+  "action.approve-in-terminal": "O que fazer: aprove ou negue no terminal da sessão {session} em {wt}.",
+  "action.prompt-session": "O que fazer: a sessão {session} em {wt} espera a sua próxima mensagem no terminal dela.",
+  "action.open-session": "A revisão de memória de {id} espera uma sessão em {wt}. O comando abaixo abre uma lá, já com a mensagem.",
+  "action.fix-mr-check": "A checagem de PR/MR falhou em {wt} ({error}): {ids} não pode ser visto como concluído pelo PR ou MR. Reinicie o dashboard com um token da forge (troque &lt;your token&gt; pelo seu), ou use Marcar como concluída se não há nada para achar.",
+  "todo.clean": "{n} tarefa(s) concluída(s) podem ser limpas: {ids}. Aperte o botão, ou rode work.sh cleanup &lt;ID&gt; naquele worktree.",
+  "todo.open": "Abrir",
+  "status.running": "Em andamento",
+  "status.running.m": "Um agente está trabalhando nesta tarefa agora.",
+  "status.blocked": "Travada",
+  "status.blocked.m": "Um agente parou sem escrever o arquivo dele direito; a sessão costuma mandá-lo de volta.",
+  "status.FAIL": "Falhou",
+  "status.FAIL.m": "Uma revisão deu FAIL, ou uma etapa não passou na checagem. A tarefa não anda até alguém decidir.",
+  "status.findings": "Achados para decidir",
+  "status.findings.m": "Algumas revisões acharam algo e nem todo achado está decidido: você escolhe quais corrigir.",
+  "status.ready-for-mr": "Pronta para PR/MR",
+  "status.ready-for-mr.m": "As revisões chegaram e os achados estão decididos: o próximo passo é o pull ou merge request.",
+  "status.done": "Concluída",
+  "status.done.m": "Há um pull ou merge request aberto ou mergeado para esta branch, o git mostra a branch mergeada, ou a tarefa foi marcada como concluída.",
+  "status.purpose": "Só o propósito",
+  "status.purpose.m": "Só o propósito está escrito: vem a entrevista ou o contrato.",
+  "status.stage": "Parada após {stage}",
+  "status.stage.m": "O último arquivo escrito é o de {stage} e nenhum agente está rodando: o fluxo continua na sessão.",
+  "status.mr-unchecked": "Checagem de PR/MR falhou",
+  "status.mr-unchecked.m": "As revisões chegaram, mas a página não conseguiu perguntar à forge se há PR ou MR: ela não sabe se a tarefa foi entregue.",
+  "status.ready-to-close": "Pronta para fechar",
+  "status.ready-to-close.m": "As revisões chegaram e estão decididas, e esta branch não tem PR ou MR para achar (branch base, HEAD destacado ou forge sem API conhecida): marque como concluída quando entregar.",
+  "next.label": "Próximo passo:",
+  "next.contract": "O refiner escreve o contrato em seguida. Se a sessão estiver esperando por você, termine a entrevista lá.",
+  "next.change": "O executor implementa o contrato em seguida, na sessão.",
+  "next.proof": "O tester prova a mudança em seguida, na sessão.",
+  "next.reviews": "As revisões (contrato, segurança, QA, produto) vêm em seguida, na sessão.",
+  "next.wait": "Aguarde. Os agentes estão trabalhando; nada a fazer, a não ser que algo apareça em \"Esperando por você\".",
+  "next.unblock": "Veja o agente travado abaixo. Se a sessão não o mandar de volta sozinha, avise a sessão.",
+  "next.fix-fail": "Leia a revisão com FAIL (arquivos das etapas abaixo) e diga à sessão se deve corrigir.",
+  "next.decide-findings": "Decida cada achado em Achados, abaixo (corrigir ou aceitar), ou responda a pergunta na sessão.",
+  "next.open-mr": "Abra o pull ou merge request desta branch; a tarefa fica concluída assim que a forge tiver.",
+  "next.fix-mr-check": "A busca de PR/MR falhou ({error}), então a página não sabe se existe. Reinicie o dashboard com um token da forge (troque &lt;your token&gt; pelo seu). Se a tarefa não tem nada para entregar, use Marcar como concluída.",
+  "next.mark-done": "Esta branch não tem PR ou MR para achar (branch base, HEAD destacado ou forge sem API conhecida). Quando o trabalho estiver entregue, aperte Marcar como concluída ou rode o comando.",
+  "next.clean-up": "Nada a entregar. Quando não precisar mais da tarefa, aperte Limpar ou rode o comando.",
+  "mr.link": "PR/MR #{iid} ({state})",
+  "mr.opened": "aberto",
+  "mr.merged": "mergeado",
+  "mr.unavailable": "Checagem de PR/MR indisponível: a forge não respondeu ou recusou o token. Enquanto isso, a tarefa não fica concluída pelo PR ou MR.",
+  "mr.no-token": "Checagem de PR/MR indisponível: sem token do GitLab (defina GITLAB_TOKEN, ou coloque-o na URL do origin).",
+  "mr.unsupported-remote": "Checagem de PR/MR indisponível: o remote origin não é GitHub nem GitLab. Feche a tarefa com Marcar como concluída.",
+  "mr.host-not-allowed": "Checagem de PR/MR indisponível: o host do origin não é uma forge permitida, então o token não é mandado para lá (defina FORGE_HOST, ou forge_hosts no flow.json).",
+  "mr.error": "Checagem de PR/MR indisponível ({error}).",
+  "warning.fail-unresolved": "FAIL não resolvido: uma revisão deu FAIL e a tarefa foi fechada mesmo assim.",
+  "closed.work.sh": "Marcada como concluída (work.sh done ou a página).",
+  "h.timeline": "Onde está",
+  "h.files": "Arquivos das etapas",
+  "h.agents": "Agentes",
+  "h.events": "Eventos recentes ({n})",
+  "h.findings": "Achados",
+  "findings.count": "{open} abertos de {total}",
+  "findings.reason.no-decision": "Por que está em \"achados\": nenhuma decisão registrada ainda (findings-decision.md não existe).",
+  "findings.reason.decision-without-date": "Por que está em \"achados\": findings-decision.md existe mas não começa com \"Decided:\", então não conta.",
+  "findings.reason.review-newer": "Por que está em \"achados\": estas revisões rodaram de novo depois da última decisão: {lenses}. Decida de novo.",
+  "findings.lens": "revisão",
+  "findings.severity": "severidade",
+  "findings.summary": "achado",
+  "findings.decision": "decisão",
+  "dec.fix": "corrigir",
+  "dec.accepted": "aceito",
+  "dec.open": "aberto",
+  "sev.critical": "crítica",
+  "sev.high": "alta",
+  "sev.medium": "média",
+  "sev.low": "baixa",
+  "sev.info": "info",
+  "sev.unknown": "não informada",
+  "tl.purpose": "propósito",
+  "tl.contract": "contrato",
+  "tl.change": "mudança",
+  "tl.proof": "prova",
+  "tl.reviews": "revisões {n}/{total}",
+  "tl.decision": "decisão dos achados",
+  "tl.decision.none": "sem achados",
+  "tl.closed": "fechada",
+  "file.missing": "{file} ainda não foi escrito.",
+  "lane.state.running": "rodando",
+  "lane.state.ok": "terminou",
+  "lane.state.failed": "não passou na checagem",
+  "lane.state.blocked": "travado",
+  "lane.state.stale": "sem notícia há 15 min (sessão encerrada?)",
+  "lane.state.idle": "parado",
+  "lane.took": "levou {s}s",
+  "lane.since": "desde {ago}",
+  "lane.more": "detalhes",
+  "lane.id": "id do agente {id} · {tools} chamadas de ferramenta · visto há {ago}",
+  "lane.none": "Nenhum agente para acompanhar agora.",
+  "lane.main": "Sessão principal: {state}, {tools} chamadas de ferramenta, vista há {ago}.",
+  "close.button": "Marcar como concluída",
+  "close.title": "Marcar {id} como concluída",
+  "close.intro": "Isto grava o marcador de fechada, o mesmo que work.sh done {id}. A tarefa passa a constar como concluída e pode ser limpa. Nada é apagado.",
+  "close.warn.fail": "Uma revisão deu FAIL e não foi resolvida: a tarefa vai constar como concluída com o aviso \"FAIL não resolvido\".",
+  "close.warn.open-findings": "{n} achado(s) não estão decididos: fechar não registra nada sobre eles.",
+  "close.warn.running": "Um agente ainda está rodando nesta tarefa.",
+  "close.confirm": "Marcar como concluída",
+  "close.ok": "Marcada como concluída. Agora você pode limpá-la.",
+  "clean.button": "Limpar",
+  "clean.all": "Limpar todas as concluídas",
+  "clean.title": "Limpar",
+  "clean.title.all": "Limpar todas as tarefas concluídas",
+  "clean.intro": "Escolha o que apagar. Só o que está listado e marcado aqui é apagado; nada mais.",
+  "clean.loading": "Lendo o que pode ser limpo…",
+  "clean.empty": "Nada para limpar.",
+  "clean.item.state": "Estado da tarefa no disco",
+  "clean.item.worktree": "Worktree e a branch local dele",
+  "clean.item.memory": "Memória do Claude sobre esta tarefa",
+  "clean.item.memory.m": "O dashboard não sabe quais entradas de memória são da tarefa: a sessão do worktree pergunta a você na próxima mensagem e apaga só as que você marcar.",
+  "clean.refused": "Não é possível: {reason}",
+  "clean.recreate": "Para fazer correções de revisão depois, recrie com:",
+  "clean.confirm": "Apagar o que está marcado",
+  "clean.cancel": "Fechar",
+  "clean.none.checked": "Marque pelo menos um item.",
+  "clean.ok": "Limpo.",
+  "clean.partial": "Alguns itens não foram limpos (o resto foi):",
+  "clean.key.paths": "apaga",
+  "clean.key.path": "pasta do worktree",
+  "clean.key.branch": "branch local apagada",
+  "clean.key.branch.kept": "a branch {branch} fica: é uma branch base, só a pasta sai",
+  "clean.key.tasks": "tarefas nele",
+  "clean.key.request": "arquivo do pedido",
+  "clean.key.session_worktree": "perguntado pela sessão de",
+  "clean.key.session_worktree_if_removed": "se esse worktree for removido, pela sessão de",
+  "clean.key.ignored": "{n} arquivo(s) ignorados pelo git saem junto com a pasta",
+  "clean.key.sensitive": "arquivos que parecem segredos ou estado de outra tarefa (mova ou apague você mesmo antes):",
+  "clean.cancels.memory": "Isto inclui o pedido de memória pendente desta tarefa: marque também o item de memória para pedir de novo à sessão.",
+  "refuse.no-remote-branch": "a branch não tem branch remota",
+  "refuse.main-worktree": "é o worktree principal do repositório",
+  "refuse.serving-worktree": "é o worktree de onde este dashboard roda",
+  "refuse.other-task-not-done": "outra tarefa deste worktree não está concluída",
+  "refuse.no-such-task": "a tarefa não existe mais",
+  "refuse.detached": "o worktree está em HEAD destacado (sem branch para recriá-lo)",
+  "refuse.live-session": "há uma sessão do Claude viva neste worktree (aberta, esperando por você ou ativa nos últimos 15 min); feche antes",
+  "refuse.sensitive-files": "ele tem arquivos ignorados pelo git que parecem segredos, ou estado de outra tarefa, que seriam perdidos",
+  "refuse.not-done": "a tarefa não está concluída",
+  "refuse.dirty": "o worktree tem mudanças não commitadas ou arquivos não rastreados",
+  "refuse.unpushed": "a branch tem commits que não estão em nenhum remote",
+  "refuse.hand": "Se a branch foi mergeada com squash e a branch remota apagada, remova à mão depois de conferir: git worktree remove &lt;caminho&gt; e git branch -D &lt;branch&gt;.",
+  "err.bad-body": "A página mandou um pedido que o servidor não aceita. Recarregue a página.",
+  "err.empty": "Nada foi escolhido, então nada foi feito.",
+  "err.plan-changed": "Algo mudou desde que esta lista foi mostrada (um arquivo, um commit ou o status de uma tarefa): nada foi apagado. Abra de novo.",
+  "err.refused": "O servidor recusou um item que esta lista mostrou como possível: nada foi apagado. Abra de novo para ver o motivo.",
+  "err.no-such-task": "A tarefa não existe mais.",
+  "err.already-done": "A tarefa já está concluída.",
+  "err.http": "O servidor respondeu HTTP {status}.",
+  "err.raw": "mensagem do servidor",
+  "mr.link.git": "mergeada na base (vista pelo git)",
+  "status.clarify": "Perguntas abertas",
+  "status.clarify.m": "Uma etapa deixou marcadores [NEEDS CLARIFICATION]: o executor não começa até você responder.",
+  "next.clarify": "Responda as perguntas abertas na sessão, uma de cada vez; as respostas vão para o propósito.",
+  "h.rulings": "Decisões tomadas sem você",
+  "rulings.none": "Nenhuma decisão tomada sem você.",
+  "where.extra": "trilha {lane} · rodada de correção {rounds}/{max} · {clarified} pergunta(s) respondida(s)",
+  "clean.no-retro": "Sem retrospectiva ainda: o que esta tarefa ensinou vai junto com o estado dela. Rode a retrospectiva antes.",
+  "theme.to-light": "claro",
+  "theme.to-dark": "escuro",
+  "theme.title": "Trocar o tema",
+  "tl.retro": "retrospectiva",
+  "brand.tag": "central de controle dos agentes de código",
+  "role.refiner": "refinador",
+  "role.executor": "executor",
+  "role.tester": "testador",
+  "role.reviewer": "revisor de contrato",
+  "role.security-reviewer": "revisor de segurança",
+  "role.qa-reviewer": "revisor de QA",
+  "role.product-reviewer": "revisor de produto",
+  "role.retrospective": "retrospectiva",
+  "role.main": "sessão principal",
+  "role.foreman": "mestre de obras",
+  "verdict.PASS": "aprovado",
+  "verdict.PASS_WITH_FINDINGS": "aprovado com achados",
+  "verdict.FAIL": "reprovado",
+  "verdict.DONE": "concluído",
+  "verdict.DONE_WITH_CONCERNS": "concluído com ressalvas",
+  "verdict.NEEDS_CONTEXT": "precisa de contexto",
+  "verdict.BLOCKED": "travado",
+  "ev.start": "começou",
+  "ev.stop": "terminou",
+  "ev.tool": "ferramenta",
+  "ev.blocked": "devolvido",
+  "ev.refused": "recusado",
+  "lens.contract": "contrato",
+  "lens.security": "segurança",
+  "lens.qa": "QA",
+  "lens.product": "produto",
+  "prompt.decide-findings": "decida os achados de {id}",
+  "h.crew": "Equipe",
+  "ruling.why": "por quê:",
+  "ruling.cost": "custo se estiver errada:",
+  "fstate.needs-you": "sua decisão",
+  "fstate.agent": "o agente corrige",
+  "fstate.fixing": "em correção",
+  "fstate.fixed": "corrigido",
+  "fstate.accepted": "aceito",
+  "fstate.needs-you.m": "Uma revisão aprovou a mudança com este achado. Só você move: corrigir ou aceitar como está.",
+  "fstate.reopened.m": "Você pediu correção, mas a revisão nova ainda aponta. Decida de novo.",
+  "fstate.capped.m": "A revisão reprovou e as rodadas de correção acabaram: os agentes pararam, a decisão é sua.",
+  "fstate.agent.m": "A revisão reprovou: o {agent} corrige sozinho na rodada de correção, e a revisão roda de novo.",
+  "fstate.fixing.m": "Você pediu correção: o {agent} está corrigindo, e depois a revisão roda de novo.",
+  "fstate.accepted.m": "Aceito como está; registrado no propósito com a data.",
+  "fstate.fixed.m": "Corrigido: a revisão nova não aponta mais.",
+  "fcount.needs-you": "{n} esperando você",
+  "fcount.agent": "{n} os agentes corrigem",
+  "fcount.fixing": "{n} em correção",
+  "fcount.fixed": "{n} corrigidos",
+  "fcount.accepted": "{n} aceitos",
+  "fpick.fix": "Corrigir (volta para o {agent})",
+  "fpick.accept": "Aceitar como está",
+  "fpick.reason": "motivo (opcional)",
+  "fpick.send": "Enviar a decisão ({n} achado(s))",
+  "fpick.missing": "Escolha corrigir ou aceitar em todo achado que espera você.",
+  "fpick.sent": "Decisão registrada. A sessão em {wt} aplica na sua próxima mensagem lá: mande qualquer mensagem (por exemplo a de baixo).",
+  "prompt.apply-findings": "aplique a decisão dos achados de {id}",
+  "err.undecided": "Todo achado que espera você precisa de uma decisão.",
+  "status.fixing": "Em correção",
+  "status.fixing.m": "Você decidiu os achados na página: os agentes corrigem os que você marcou, e depois as revisões rodam de novo.",
+  "next.wait-fixes": "Aguarde as correções. Se a sessão ainda não começou, mande uma mensagem para ela em {wt}.",
+  "next.fix-loop": "Nada a fazer: a rodada de correção está cuidando da revisão reprovada (veja Achados), e depois a revisão roda de novo.",
+  "brand.credit": "Foreman, por Yan Tadeu · Apache-2.0",
+  "brand.sub": "console de operação dos agentes",
+  "decide.accepted.m": "Grava \"accepted\" para este achado em findings-decision.md. O achado vai para \"Aceitos\" e não é corrigido.",
+  "decide.confirm": "Confirmar",
+  "decide.fix.m": "Grava \"fix\" para este achado em findings-decision.md. O achado vai para \"Agente corrigindo\", e o agente corrige na próxima rodada de correção.",
+  "decide.title.accepted": "Aceitar este achado?",
+  "decide.title.fix": "Corrigir este achado?",
+  "decision.recorded": "Decisão registrada. A sessão em {wt} aplica na próxima mensagem lá: mande nela a mensagem abaixo, ou abra uma sessão com o segundo comando.",
+  "dismiss": "Dispensar este alerta",
+  "dismiss.restore": "Mostrar de novo",
+  "dismissed.count": "Dispensados ({n})",
+  "err.no-such-finding": "Este achado não existe mais: a revisão dele mudou. A lista já está atualizada; decida de novo.",
+  "err.not-open": "Este achado já foi decidido, aqui ou numa sessão. A lista já está atualizada.",
+  "fgroup.accepted": "Aceitos",
+  "fgroup.accepted.m": "Ficam como estão, sem correção. Nada a fazer.",
+  "fgroup.empty": "Nenhum.",
+  "fgroup.fix-pending": "Agente corrigindo",
+  "fgroup.fix-pending.m": "Você escolheu corrigir estes. Agora vem a rodada de correção: executor, tester e as revisões de novo. Quando ela termina, o agente marca cada um que corrigiu, e achado novo volta para \"Você decide\".",
+  "fgroup.fixed": "Corrigidos",
+  "fgroup.fixed.m": "A rodada de correção terminou e o agente marcou estes como corrigidos. Nada a fazer.",
+  "fgroup.open": "Você decide",
+  "fgroup.open.m": "Estes achados esperam por você. Em cada um, aperte Corrigir (o agente corrige na próxima rodada de correção) ou Aceitar (fica como está, registrado como aceito). Nada é gravado antes de você confirmar.",
+  "finding.accept": "Aceitar",
+  "finding.fix": "Corrigir",
+  "findings.reason.some-open": "Por que está em \"achados\": findings-decision.md decide só parte dos achados; os marcados como abertos abaixo ainda precisam de decisão.",
+  "fstate.fix-pending": "em correção",
+  "fstate.open": "aberto",
+  "lane.last": "última ação há {ago}",
+  "lane.tools": "{n} chamadas de ferramenta",
+  "live.connecting": "conectando…",
+  "prompt.apply": "aplique a decisão dos achados de {id}",
+  "prompt.decide": "decida os achados de {id}",
+  "prompt.fail": "mostre a revisão reprovada de {id} e proponha a correção",
+  "prompt.unblock": "veja o agente travado de {id} e mande-o de volta para terminar o arquivo da etapa",
+  "refuse.too-many-ignored": "ele tem mais de 200 arquivos ignorados pelo git, demais para listar aqui; remova à mão depois de conferi-los",
+  "session.none": "Sem sessão aberta lá? Este comando abre uma já com a mensagem:",
+  "theme.dark": "tema: escuro",
+  "theme.light": "tema: claro",
+  "theme.system": "tema: do sistema",
+  "todo.findings.go": "Decidir na página",
+  "todo.findings.open": "{n} achado(s) esperam sua decisão.",
+  "h.office": "A obra",
+  "h.purpose": "Propósito",
+  "room.refine": "Sala de projeto",
+  "room.refine.m": "O propósito vira a planta (o contrato); as dúvidas vêm para você.",
+  "room.workshop": "Canteiro de obras",
+  "room.workshop.m": "A mudança é construída e provada por testes que mordem.",
+  "room.review": "Vistoria",
+  "room.review.m": "Quatro vistoriadores em paralelo: contrato, segurança, QA, produto.",
+  "room.decision": "Barracão da obra",
+  "room.decision.m": "Você decide os achados e fecha; a retrospectiva guarda os aprendizados.",
+  "office.hand": "mão levantada: precisa de você, clique no robô",
+  "pop.file": "escreve {file}",
+  "pop.blocked": "Parou sem terminar o arquivo e pede contexto; a sessão costuma mandá-lo de volta.",
+  "pop.idle": "Ainda não começou nesta tarefa.",
+  "perm.held": "Quer rodar {tool}. Permita ou negue aqui; a sessão espera a sua resposta.",
+  "perm.allow": "Permitir",
+  "perm.deny": "Negar",
+  "turn.placeholder": "Sua próxima mensagem para a sessão",
+  "turn.send": "Enviar para a sessão",
+  "turn.off": "Responder pela página está desligado em {wt}. Ligue com o comando abaixo; a próxima vez da sessão espera aqui a sua mensagem.",
+  "alert.off": "Responder pela página está desligado em {wt}: responda esta no terminal. Para responder as próximas aqui, rode o comando abaixo num terminal.",
+  "action.approve-on-page": "Permita ou negue aqui.",
+  "action.reply-on-page": "Escreva aqui a sua próxima mensagem.",
+  "prompt.memory": "revise a memória automática de {id}",
+  "alert.notheld": "Não ficou retida para a página (ela estava fechada quando isto foi perguntado, ou foi liberada): responda no terminal.",
+  "now.act": "PRECISA DE VOCÊ",
+  "now.wait": "AGUARDE",
+  "now.findings": "Decida {n} achado(s): corrigir ou aceitar cada um",
+  "tree.here": "VOCÊ ESTÁ AQUI",
+  "tree.waiting": "não começou",
+  "office.you": "Você",
+  "fpick.sent.now": "Decisão enviada. A sessão em {wt} recebe na hora se estiver trabalhando ou esperando por ela; se já parou, o comando abaixo entrega.",
+  "tab.tree": "Etapas",
+  "tab.office": "Obra",
+  "waiting.elsewhere": "Também esperando por você, em outras tarefas",
+  "lane.Light": "leve",
+  "lane.Full": "completa",
+  "lane.None": "nenhuma",
+  "switch.title": "Responder por esta página:",
+  "switch.label.answers": "perguntas",
+  "switch.label.turns": "a vez da sessão",
+  "switch.on": "ligado",
+  "switch.off": "desligado",
+  "switch.about.answers": "Quando uma sessão deste worktree perguntar algo, a pergunta espera aqui pela sua resposta enquanto a página estiver aberta, e não só no terminal.",
+  "switch.about.turns": "Quando a sessão principal deste worktree terminar a vez dela, ela espera aqui a sua próxima mensagem enquanto a página estiver aberta; o que você escrever continua a sessão.",
+  "switch.risk": "Qualquer coisa que consiga ler o token desta página, como um agente com acesso ao shell, também poderia responder por ela. Ligue onde esse risco for aceitável.",
+  "switch.confirm.title.on": "Ligar: {what}",
+  "switch.confirm.title.off": "Desligar: {what}",
+  "switch.do.on": "Ligar",
+  "switch.do.off": "Desligar",
+  "switch.turn-on.answers": "Responder perguntas por esta página",
+  "switch.turn-on.turns": "Responder à sessão por esta página",
+  "live.on": "ao vivo",
+  "live.off": "atualizando a cada 2 s"
+ }
+}/* i18n:end */;
+// Statuses dashboard.py returns by name; any other status is the agent of the last stage written.
+const STATUSES = ["running", "blocked", "clarify", "FAIL", "findings", "fixing", "ready-for-mr", "done", "purpose"];
+// What the page shows instead of "ready-for-mr" when the PR/MR cannot be seen.
+const SHOWN = { "fix-mr-check": "mr-unchecked", "mark-done": "ready-to-close" };
+const shown = (k) => k.status === "ready-for-mr" && SHOWN[k.next_step] ? SHOWN[k.next_step] : k.status;
+
+const LANG_KEY = "agent-flow-lang", THEME_KEY = "agent-flow-theme", MUTE_KEY = "agent-flow-muted";
+let lang = null;
+// localStorage can throw (private mode, storage blocked): then a choice lasts for the page only.
+try { lang = localStorage.getItem(LANG_KEY) } catch (e) {}
+if (lang !== "pt" && lang !== "en") lang = String(navigator.language || "").toLowerCase().startsWith("pt") ? "pt" : "en";
+
+const $ = (id) => document.getElementById(id);
+const esc = (s) => String(s ?? "").replace(/[&<>"]/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
+// Dictionary text is trusted markup; every value put into it is escaped. A missing key falls back
+// to English, then to the key itself, never to an empty label.
+const t = (key, vars) => {
+  const s = (I18N[lang] || {})[key] ?? I18N.en[key] ?? key;
+  return s.replace(/\{(\w+)\}/g, (m, k) => vars && k in vars ? esc(vars[k]) : m);
+};
+const has = (key) => key in I18N.en;
+// A name the page shows (agent role, verdict, event, lens), plain text, in the dev's language.
+const word = (prefix, v) => (I18N[lang] || {})[prefix + v] ?? I18N.en[prefix + v] ?? String(v ?? "");
+const agentCfg = (a) => (flowCfg.agents && typeof flowCfg.agents[a] === "object" && flowCfg.agents[a]) || {};
+const roleName = (a) => has("role." + a) ? word("role.", a) : String(pick(agentCfg(a).label) || a);
+const verdictName = (v) => word("verdict.", v);
+const evName = (e) => word("ev.", e), lensName = (l) => word("lens.", l);
+const isStatus = (s) => STATUSES.includes(s) || Object.values(SHOWN).includes(s);
+const statusLabel = (s) => isStatus(s) ? t("status." + s) : t("status.stage", { stage: roleName(s) });
+const statusMeaning = (s) => isStatus(s) ? t("status." + s + ".m") : t("status.stage.m", { stage: roleName(s) });
+const statusBadge = (s) => `<span class="st ${esc(s)}" title="${esc(statusMeaning(s))}">${statusLabel(s)}</span>`;
+const ago = (x) => { const s = Math.round(Date.now() / 1000 - x); return s < 60 ? s + "s" : s < 3600 ? Math.round(s / 60) + "m" : s < 86400 ? Math.round(s / 3600) + "h" : Math.round(s / 86400) + "d" };
+const q = (s) => /^[A-Za-z0-9_\/.:=@%+,-]+$/.test(s) ? s : "'" + String(s).replace(/'/g, "'\\''") + "'";
+// The messages a dev types in a session, by the English text the server quotes in a command.
+const PROMPTS = [["review the auto memory of ", "prompt.memory"], ["decide the findings of ", "prompt.decide-findings"],
+                 ["apply the findings decision of ", "prompt.apply-findings"], ["show the review with FAIL of ", "prompt.fail"],
+                 ["look at the blocked agent of ", "prompt.unblock"]];
+// A command to copy, whole: a message for a session is translated and stays inside it.
+function cmdText(command) {
+  return esc(String(command || "").replace(/claude '([^']*)'$/, (m, msg) => {
+    const hit = PROMPTS.find(([en]) => msg.startsWith(en));
+    if (!hit) return m;
+    const words = (I18N[lang] || {})[hit[1]] ?? I18N.en[hit[1]];
+    return 'claude "' + words.replace("{id}", msg.slice(hit[0].length)).replace(/["$`\\]/g, "\\$&") + '"';
+  }));
+}
+const cmdBlock = (command) => command ? `<div class="cmd"><span class="k">${t("cmd.shell")}</span><code>${cmdText(command)}</code><button type="button" data-copy>${t("copy")}</button></div>` : "";
+const sessionCmd = (path, key, id) => `cd ${q(path)} && claude ${q((I18N.en[key] || "").replace("{id}", id))}`;
+// Assigning the same HTML again would drop a selection, a half-typed answer or an open <details>.
+const setHTML = (el, html) => { if (el.dataset.html !== html) { el.innerHTML = html; el.dataset.html = html } };
+async function errorText(r) {
+  const raw = await r.text();
+  let code = null;
+  try { code = JSON.parse(raw).code } catch (e) {}
+  const msg = code && has("err." + code) ? t("err." + code) : t("err.http", { status: r.status });
+  return `<div class="bad">${msg}</div><details><summary>${t("err.raw")}</summary><div class="meta">${esc(raw.slice(0, 300))}</div></details>`;
+}
+// null means "not found"; a server or network error throws, so it never reads as "no task".
+const getJSON = async (p) => { const r = await fetch(p); if (r.status === 404) return null; if (!r.ok) throw new Error(p + ": HTTP " + r.status + " " + (await r.text()).slice(0, 200)); return r.json() };
+// Per-server secret the dashboard substitutes when it serves this page; required by every POST.
+const TOKEN = "__KIT_TOKEN__";
+// Split so the server's substitution leaves this one alone: TOKEN still equal to it means the
+// page was not served by a Foreman dashboard.
+const PLACEHOLDER = "__KIT_" + "TOKEN__";
+const post = (path, body) => fetch(path, { method: "POST", headers: { "Content-Type": "application/json", "X-Kit-Token": TOKEN }, body: JSON.stringify(body) });
+
+// Robots: one per role, its color and emblem; eyes and antenna show the state.
+const ROLES = {
+  foreman: ["#f5a524", ""], main: ["#f5a524", ""],
+  refiner: ["#a78bfa", "M3.5 3.5h5M3.5 6h5M3.5 8.5h3"],
+  executor: ["#fbbf24", "M3 9l3.5-3.5M6.2 3.3a2 2 0 1 0 2.5 2.5"],
+  tester: ["#22d3ee", "M2.8 6.3l2.2 2.2 4.2-4.6"],
+  reviewer: ["#60a5fa", "M1.8 6c1.9-2.8 6.5-2.8 8.4 0-1.9 2.8-6.5 2.8-8.4 0zM6 4.9a1.1 1.1 0 1 0 0 2.2 1.1 1.1 0 1 0 0-2.2z"],
+  "security-reviewer": ["#f87171", "M6 2l3.4 1.3v2.6c0 2.1-1.5 3.4-3.4 4-1.9-.6-3.4-1.9-3.4-4V3.3z"],
+  "qa-reviewer": ["#34d399", "M4.3 4.3h3.4v4.4H4.3zM2.6 5.2h1.7M7.7 5.2h1.7M2.6 7.8h1.7M7.7 7.8h1.7M5 3l1 1.3L7 3"],
+  "product-reviewer": ["#f472b6", "M6 2.2l1.1 2.4 2.6.3-1.9 1.8.5 2.6L6 8 3.7 9.3l.5-2.6-1.9-1.8 2.6-.3z"],
+  retrospective: ["#94a3b8", "M9 4.6A3.5 3.5 0 1 0 9.4 7M9.6 2.4v2.4H7.2"],
+};
+// A raised hand: palm and four fingers, drawn so it reads at 14 px and at 22 px.
+const HAND = (size = 16) => `<svg class="hand-ico" width="${size}" height="${size}" viewBox="0 0 24 24" aria-hidden="true"><g fill="var(--accent)" stroke="var(--hand-line)" stroke-width="1.1" stroke-linejoin="round"><rect x="6.2" y="6.5" width="3" height="9" rx="1.5"/><rect x="9.4" y="3" width="3" height="11" rx="1.5"/><rect x="12.6" y="3.8" width="3" height="10.5" rx="1.5"/><rect x="15.8" y="6.8" width="3" height="8.5" rx="1.5"/><rect x="2.6" y="11.2" width="3" height="7.5" rx="1.5" transform="rotate(-38 4.1 15)"/><path d="M6.2 12.5h12.6v3.2c0 3.8-2.8 6.3-6.3 6.3s-6.3-2.5-6.3-6.3z"/></g><path d="M9.4 12.4v-2M12.6 12.4v-2M15.8 12.4v-1.6" stroke="var(--hand-line)" stroke-width=".9" stroke-linecap="round" opacity=".55"/></svg>`;
+// Emblems an agent the dev adds can wear (flow.json "agents": {"<name>": {"emblem": ..., "color": ...}}).
+const EMBLEMS = { doc: ROLES.refiner[1], wrench: ROLES.executor[1], check: ROLES.tester[1], eye: ROLES.reviewer[1],
+  shield: ROLES["security-reviewer"][1], bug: ROLES["qa-reviewer"][1], star: ROLES["product-reviewer"][1], loop: ROLES.retrospective[1],
+  gear: "M6 3.5v1M6 7.5v1M3.5 6h1M7.5 6h1M6 4.5a1.5 1.5 0 1 0 0 3a1.5 1.5 0 1 0 0-3z", gauge: "M2.5 8a3.5 3.5 0 1 1 7 0M6 8l2-2.5",
+  lock: "M3.5 5.5h5v4h-5zM4.5 5.5V4a1.5 1.5 0 0 1 3 0v1.5", db: "M3 3.5c0-1 6-1 6 0v5c0 1-6 1-6 0zM3 3.5c0 1 6 1 6 0M3 6c0 1 6 1 6 0",
+  globe: "M6 2a4 4 0 1 0 0 8a4 4 0 1 0 0-8zM2 6h8M6 2c-1.5 1.2-1.5 6.8 0 8M6 2c1.5 1.2 1.5 6.8 0 8", chart: "M2.5 9.5h7M3.5 9V6.5M6 9V4M8.5 9V5.5" };
+function robot(role, state, size) {
+  const cfg = agentCfg(role);
+  const [color, emblem] = ROLES[role] || [/^#[0-9a-fA-F]{3,8}$/.test(cfg.color || "") ? cfg.color : "#8b98ad", EMBLEMS[cfg.emblem] || ""];
+  const st = ["running", "ok", "failed", "blocked", "stale"].includes(state) ? state : "idle";
+  const eyes = st === "ok" ? '<path d="M11 21.5q2-2.4 4 0M21 21.5q2-2.4 4 0" class="eye-line"/>'
+    : st === "failed" || st === "blocked" ? '<path d="M11 19l4 4M15 19l-4 4M21 19l4 4M25 19l-4 4" class="eye-line"/>'
+    : st === "stale" ? '<path d="M11 21h4M21 21h4" class="eye-line"/>'
+    : '<g class="eyes"><circle cx="13" cy="21" r="2"/><circle cx="23" cy="21" r="2"/></g>';
+  // A hard hat on every robot, in its role's color; the foreman (the main session) wears white.
+  const boss = role === "foreman" || role === "main";
+  const hat = `<path d="M5 13h26a1.3 1.3 0 0 0 0-2.6h-1.8C29.2 5 24.2 1.5 18 1.5S6.8 5 6.8 10.4H5A1.3 1.3 0 0 0 5 13z" style="fill:${boss ? "var(--hat-boss)" : "var(--role)"}" stroke="rgba(0,0,0,.35)" stroke-width=".8"/><path d="M18 2v8.4" stroke="rgba(0,0,0,.28)" stroke-width="2.4"/>${boss ? '<path d="M7 11.7h22" stroke="var(--role)" stroke-width="1.6"/>' : ""}`;
+  const badge = emblem ? `<g transform="translate(23 23)"><circle cx="6" cy="6" r="6.6" fill="var(--bg)" stroke="var(--role)" stroke-width="1.2"/><path d="${emblem}" fill="none" stroke="var(--role)" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round"/></g>` : "";
+  return `<svg class="bot ${st}" style="--role:${color}" width="${size}" height="${size}" viewBox="0 0 36 36" aria-hidden="true">${hat}<rect x="6" y="10" width="24" height="20" rx="6" class="head"/><rect x="9" y="16" width="18" height="10" rx="3.5" class="visor"/>${eyes}${badge}</svg>`;
+}
+
+// The site: one room per stage of the flow; the crew works at its stations, the task walks.
+// The rooms of the office: "rooms" of flow.json (/flow-agent adds them), else these four.
+const DEFAULT_ROOMS = [{ id: "refine", agents: ["refiner"] }, { id: "workshop", agents: ["executor", "tester"] },
+  { id: "review", agents: ["reviewer", "security-reviewer", "qa-reviewer", "product-reviewer"] }, { id: "decision", agents: ["main", "retrospective"] }];
+let flowCfg = {};
+const rooms = () => Array.isArray(flowCfg.rooms) && flowCfg.rooms.some(r => r && r.id && Array.isArray(r.agents))
+  ? flowCfg.rooms.filter(r => r && r.id && Array.isArray(r.agents)) : DEFAULT_ROOMS;
+const pick = (m) => m && typeof m === "object" ? (m[lang] ?? m[lang === "pt" ? "pt-BR" : "en"] ?? m.en ?? Object.values(m)[0]) : m;
+const roomName = (r) => r.name ? String(pick(r.name)) : t("room." + r.id);
+const roomOf = (agent) => (rooms().find(r => r.agents.includes(agent)) || rooms()[0]).id;
+const STAGE_STEP = { refiner: "contract", executor: "change", tester: "proof" };
+function stepRoom(st) {
+  if (st.key === "purpose") return roomOf("refiner");
+  if (st.key === "reviews") return roomOf((st.lenses[0] || {}).agent || "reviewer");
+  if (st.key === "decision" || st.key === "closed") return roomOf("main");
+  return roomOf(st.role);
+}
+const FLOORS = ["fr", "fw", "fv", "fd"];
+const ROOM_FLOOR = { refine: "fr", workshop: "fw", review: "fv", decision: "fd" };
+const DEFS = `<defs>
+<pattern id="yard" width="22" height="22" patternUnits="userSpaceOnUse"><rect width="22" height="22" style="fill:var(--corr1)"/><circle cx="4" cy="5" r="1.4" style="fill:var(--corr2)"/><circle cx="15" cy="9" r="1.1" style="fill:var(--corr2)"/><circle cx="9" cy="17" r="1.6" style="fill:var(--corr2)"/><circle cx="19" cy="19" r="1" style="fill:var(--corr2)"/></pattern>
+<pattern id="hazard" width="14" height="14" patternUnits="userSpaceOnUse" patternTransform="rotate(45)"><rect width="14" height="14" style="fill:var(--hazard)"/><rect width="7" height="14" fill="#1d1a14"/></pattern>
+<pattern id="fr" width="48" height="48" patternUnits="userSpaceOnUse"><rect width="48" height="48" style="fill:var(--fr1)"/><path d="M12 0v48M24 0v48M36 0v48M0 12h48M0 24h48M0 36h48" style="stroke:var(--fr2)" stroke-width=".6" opacity=".55"/><path d="M0 0h48M0 0v48" style="stroke:var(--fr2)" stroke-width="1.4"/></pattern>
+<pattern id="fw" width="60" height="60" patternUnits="userSpaceOnUse"><rect width="60" height="60" style="fill:var(--fw1)"/><circle cx="12" cy="14" r="1.2" style="fill:var(--fw2)"/><circle cx="40" cy="8" r="1" style="fill:var(--fw2)"/><circle cx="30" cy="38" r="1.4" style="fill:var(--fw2)"/><circle cx="50" cy="48" r="1" style="fill:var(--fw2)"/><path d="M0 0h60M0 0v60" style="stroke:var(--fw2)" stroke-width="2"/></pattern>
+<pattern id="fv" width="30" height="30" patternUnits="userSpaceOnUse"><rect width="30" height="30" style="fill:var(--fv1)"/><path d="M0 0h30M0 0v30" style="stroke:var(--fv2)" stroke-width="2"/></pattern>
+<pattern id="fd" width="80" height="20" patternUnits="userSpaceOnUse"><rect width="80" height="20" style="fill:var(--fd1)"/><path d="M0 0h80M50 0v20" style="stroke:var(--fd2)" stroke-width="1.5"/><circle cx="6" cy="10" r=".9" style="fill:var(--fd2)"/><circle cx="74" cy="10" r=".9" style="fill:var(--fd2)"/></pattern></defs>`;
+const cone = (x, y) => `<path d="M${x - 8} ${y + 9}h16l-5.5-19h-5z" style="fill:var(--cone)"/><path d="M${x - 4.4} ${y - 2}h8.8" stroke="#fff" stroke-width="2.4"/><rect x="${x - 10}" y="${y + 8}" width="20" height="3" rx="1" style="fill:var(--cone)"/>`;
+function station(kind, cx, dy) {
+  if (kind === "fr") return `<rect x="${cx - 46}" y="${dy}" width="92" height="26" rx="2" style="fill:var(--desk)"/><rect x="${cx - 36}" y="${dy + 3}" width="58" height="20" style="fill:var(--sheet)"/><path d="M${cx - 31} ${dy + 9}h30M${cx - 31} ${dy + 14}h44M${cx - 31} ${dy + 19}h22M${cx + 4} ${dy + 6}v12" style="stroke:var(--ink)" stroke-width="1.2"/><path d="M${cx + 28} ${dy + 4}l12 16" stroke="#1d1a14" stroke-width="2"/>`;
+  if (kind === "fv") return `<rect x="${cx - 45}" y="${dy}" width="90" height="24" rx="3" style="fill:var(--desk)"/><rect x="${cx - 12}" y="${dy - 6}" width="24" height="30" rx="2" style="fill:var(--sheet)"/><rect x="${cx - 6}" y="${dy - 9}" width="12" height="5" rx="1" fill="#555"/><path d="M${cx - 8} ${dy + 4}l2 2 4-4M${cx - 8} ${dy + 12}l2 2 4-4" stroke="#2f9e5b" stroke-width="1.6" fill="none"/><path d="M${cx} ${dy + 4}h7M${cx} ${dy + 12}h7M${cx - 8} ${dy + 19}h15" style="stroke:var(--ink)" stroke-width="1.2"/>`;
+  return `<rect x="${cx - 46}" y="${dy + 2}" width="92" height="20" rx="2" style="fill:var(--desk)"/><rect x="${cx - 46}" y="${dy + 2}" width="92" height="4" fill="rgba(0,0,0,.25)"/><rect x="${cx + 12}" y="${dy - 8}" width="26" height="12" rx="2" style="fill:var(--tool)"/><rect x="${cx + 20}" y="${dy - 12}" width="10" height="5" rx="2" fill="none" stroke="#1d1a14" stroke-width="1.6"/><path d="M${cx - 34} ${dy - 2}l14 6M${cx - 30} ${dy - 4}v8" stroke="#9aa0a6" stroke-width="2.4" stroke-linecap="round"/>`;
+}
+const bricks = (x, y) => [3, 2, 1].map((cnt, r) => Array.from({ length: cnt }, (_, c) => `<rect x="${x + c * 14 + r * 7}" y="${y - r * 8}" width="13" height="7" style="fill:var(--brick)" stroke="rgba(0,0,0,.3)"/>`).join("")).join("");
+// The plan: rooms in rows of two, each as wide as its desks need; seats spread over the room.
+function layout() {
+  const W = 1000, rowH = 240, gap = 56, out = { rooms: [], seats: {}, H: 0 };
+  const rs = rooms();
+  let y = 40;
+  for (let i = 0; i < rs.length; i += 2) {
+    const row = rs.slice(i, i + 2), weight = row.map(r => Math.max(1.6, r.agents.length));
+    const inner = W - 60 - (row.length - 1) * 30, total = weight.reduce((a, b) => a + b, 0);
+    let x = 30;
+    row.forEach((r, k) => {
+      const w = inner * weight[k] / total;
+      out.rooms.push({ r, x, y, w, h: rowH, floor: ROOM_FLOOR[r.id] || FLOORS[(i + k) % FLOORS.length] });
+      r.agents.forEach((a, j) => { out.seats[a] = [x + w * (j + 0.5) / r.agents.length, y + rowH * 0.6] });
+      x += w + 30;
+    });
+    y += rowH + gap;
+  }
+  out.H = y - gap + 40;
+  return out;
+}
+function floorSVG(L) {
+  const parts = [`<rect width="1000" height="${L.H}" fill="url(#yard)"/>`];
+  L.rooms.forEach(({ r, x, y, w, h, floor }, n) => {
+    parts.push(`<rect x="${x}" y="${y}" width="${w}" height="${h}" fill="url(#${floor})" style="stroke:var(--wall)" stroke-width="6"/>`);
+    // The entrance: a gap in the wall with hazard tape across the threshold.
+    parts.push(`<rect x="${x + w / 2 - 28}" y="${n % 4 < 2 ? y + h - 5 : y - 5}" width="56" height="10" fill="url(#hazard)"/>`);
+    r.agents.forEach((a, j) => {
+      const cx = x + w * (j + 0.5) / r.agents.length, dy = y + h * 0.6 + 22;
+      // The foreman's plan table, with the rolled-up drawings.
+      if (a === "main") parts.push(`<rect x="${cx - 70}" y="${y + h - 50}" width="140" height="32" rx="3" style="fill:var(--desk)"/><rect x="${cx - 60}" y="${y + h - 46}" width="78" height="24" style="fill:var(--sheet)"/><path d="M${cx - 54} ${y + h - 40}h40M${cx - 54} ${y + h - 33}h60M${cx - 54} ${y + h - 27}h30" style="stroke:var(--ink)" stroke-width="1.2"/><rect x="${cx + 26}" y="${y + h - 44}" width="36" height="7" rx="3.5" style="fill:var(--sheet)" stroke="var(--ink)"/><rect x="${cx + 26}" y="${y + h - 34}" width="36" height="7" rx="3.5" style="fill:var(--sheet)" stroke="var(--ink)"/>`);
+      else parts.push(station(floor, cx, dy));
+    });
+    parts.push(cone(x + w - 22, y + 22));
+    if (!r.agents.includes("main")) parts.push(cone(x + 22, y + h - 24));
+    if (floor === "fw") parts.push(bricks(x + w - 62, y + h - 18));
+  });
+  return `<svg class="floor-svg" viewBox="0 0 1000 ${L.H}" preserveAspectRatio="none" aria-hidden="true">${DEFS}${parts.join("")}</svg>`;
+}
+
+let lastGroups = [];
+let sel = null, openFile = null, openBot = null, attention = [], seenAlerts = null, attnSig = "", lastTask = null;
+const readHash = () => { const m = location.hash.match(/^#(\d+)\/(.+)$/); return m ? { wt: +m[1], id: decodeURIComponent(m[2]) } : null };
+
+function applyLang() {
+  document.documentElement.lang = lang === "pt" ? "pt-BR" : "en";
+  document.querySelectorAll("[data-i18n]").forEach(el => el.innerHTML = t(el.dataset.i18n));
+  const b = $("lang-btn");
+  b.innerHTML = lang === "pt" ? "<b>PT</b> / EN" : "PT / <b>EN</b>";
+  b.title = t("lang.title");
+  notifyState(); muteLabel(); applyTheme(); liveLabel();
+}
+$("lang-btn").onclick = () => {
+  lang = lang === "pt" ? "en" : "pt";
+  try { localStorage.setItem(LANG_KEY, lang) } catch (e) {}
+  // The alert block re-renders only when its signature changes: clear it so the text follows.
+  attnSig = "";
+  applyLang(); tick();
+};
+let theme = "dark";
+try { theme = ["light", "dark", "system"].includes(localStorage.getItem(THEME_KEY)) ? localStorage.getItem(THEME_KEY) : "dark" } catch (e) {}
+const systemDark = window.matchMedia ? window.matchMedia("(prefers-color-scheme: dark)") : null;
+function applyTheme() {
+  document.documentElement.dataset.theme = theme === "system" ? (systemDark && !systemDark.matches ? "light" : "dark") : theme;
+  $("theme-btn").textContent = t("theme." + theme);
+  $("theme-btn").title = t("theme.title");
+}
+if (systemDark && systemDark.addEventListener) systemDark.addEventListener("change", () => { if (theme === "system") applyTheme() });
+$("theme-btn").onclick = () => { theme = { dark: "light", light: "system", system: "dark" }[theme]; try { localStorage.setItem(THEME_KEY, theme) } catch (e) {} applyTheme() };
+
+// Copy: the clipboard API needs a secure context (localhost is one); otherwise select the text.
+document.addEventListener("click", (ev) => {
+  const b = ev.target.closest && ev.target.closest("[data-copy]");
+  if (!b) return;
+  const code = b.parentElement.querySelector("code");
+  const ok = () => { b.textContent = t("copy.done"); setTimeout(() => { b.textContent = t("copy") }, 1500) };
+  const manual = () => {
+    const range = document.createRange(); range.selectNodeContents(code);
+    const s = getSelection(); s.removeAllRanges(); s.addRange(range);
+    let copied = false;
+    try { copied = document.execCommand("copy") } catch (e) {}
+    copied ? ok() : b.textContent = t("copy.failed");
+  };
+  if (navigator.clipboard && window.isSecureContext) navigator.clipboard.writeText(code.textContent).then(ok, manual);
+  else manual();
+});
+
+let ticking = false, again = false;
+async function tick() {
+  if (ticking) { again = true; return }
+  ticking = true;
+  try { await render() } catch (e) {
+    $("tasks").innerHTML = `<div class="bad" style="padding:0 14px">${t("dashboard.error", { msg: e.message })}</div>`;
+    $("legend").innerHTML = `<span class="bad">${esc(e.message)}</span>`;
+    document.title = "(!) Foreman";
+  }
+  ticking = false;
+  if (again) { again = false; tick() }
+}
+
+async function render() {
+  const [tasks, attn, flow] = await Promise.all([getJSON("api/tasks"), getJSON("api/attention"), getJSON("flow.json")]);
+  flowCfg = flow && typeof flow === "object" ? flow : {};
+  // A server started before the alerts existed answers 404 here: that is not "no alert".
+  if (attn === null || TOKEN === PLACEHOLDER) throw new Error(t("outdated"));
+  attention = attn;
+  const groups = (tasks || []).slice();
+  lastGroups = groups;
+  // A worktree with alerts and no task still gets a row: the triage session is the one that waits most.
+  attention.forEach(a => { if (!groups.some(g => g.wt === a.wt)) groups.push({ wt: a.wt, name: a.name, branch: a.branch, here: a.here, tasks: [] }) });
+  groups.sort((a, b) => a.wt - b.wt);
+  showAttention();
+  showTodo(groups);
+  const pending = (wt) => { const g = attention.find(a => a.wt === wt); return g ? g.alerts.length + (g.memory_actions || g.memory_requests || []).length + (g.mr_check ? 1 : 0) : 0 };
+  sel = readHash() || sel;
+  if (!sel || !groups.some(g => g.wt === sel.wt && g.tasks.some(k => k.id === sel.id))) {
+    const all = groups.flatMap(g => g.tasks.map(k => ({ ...k, wt: g.wt, here: g.here })));
+    const pick = all.find(k => k.here && k.current) || all.filter(k => k.status === "running").sort((a, b) => b.updated - a.updated)[0] || all[0];
+    sel = pick ? { wt: pick.wt, id: pick.id } : null;
+  }
+  setHTML($("tasks"), groups.map(g => `
+    <div class="wt"><b>${esc(g.name)}</b>${g.branch ? " · " + esc(g.branch) : ""}${g.here ? " · " + t("here") : ""}${pending(g.wt) ? `<span class="badge" title="${esc(t("pending.badge"))}">${pending(g.wt)}</span>` : ""}</div>
+    ${g.tasks.map(k => `<button class="task${sel && sel.wt === g.wt && sel.id === k.id ? " sel" : ""}" data-wt="${g.wt}" data-id="${esc(k.id)}">
+      <div class="t"><span class="id">${k.current ? "● " : ""}${esc(k.id)}</span>${statusBadge(shown(k))}</div>
+      <div class="sub">${esc(k.title) || "&nbsp;"}</div></button>`).join("")}`).join("") || `<div class="meta" style="padding:0 14px">${t("no.task.any")}</div>`);
+  document.querySelectorAll(".task").forEach(b => b.onclick = () => select(+b.dataset.wt, b.dataset.id));
+  await showTask();
+}
+
+function select(wt, id) {
+  sel = { wt, id }; openFile = null; openBot = null;
+  history.replaceState(null, "", "#" + wt + "/" + encodeURIComponent(id)); tick();
+}
+
+// What waits on the dev besides the alerts: memory requests, failed PR/MR checks, tasks whose
+// next move is the dev's, done tasks to clean. Each ends with its action and a whole command.
+function showTodo(groups) {
+  const items = [], done = [];
+  attention.forEach(g => {
+    (g.memory_actions || []).forEach(m => items.push(`<div class="alert"><b>${esc(g.name)}</b> · ${esc(m.id)}<div class="action">${t("action.open-session", { wt: g.name, path: g.path || g.name, id: m.id })}</div>${cmdBlock(m.command)}</div>`));
+    if (g.mr_check)
+      items.push(`<div class="alert mr-unchecked"><div class="head"><b>${esc(g.name)}</b>${statusBadge("mr-unchecked")}</div><div class="action">${t("action.fix-mr-check", { wt: g.name, error: g.mr_check.error, ids: (g.mr_check.tasks || []).join(", ") })}</div>${cmdBlock(g.mr_check.command)}</div>`);
+  });
+  const checked = new Set(attention.filter(g => g.mr_check).map(g => g.wt));
+  groups.forEach(g => g.tasks.forEach(k => {
+    if (sel && g.wt === sel.wt && k.id === sel.id) return;
+    const s = shown(k);
+    if (s === "mr-unchecked" && checked.has(g.wt)) return;
+    if (["findings", "FAIL", "ready-for-mr", "mr-unchecked", "ready-to-close"].includes(s) && k.next_step !== "fix-loop") {
+      const next = k.next_step && has("next." + k.next_step) ? t("next." + k.next_step, { id: k.id, wt: g.name, error: (k.mr && k.mr.error) || "" }) : esc(k.next_step || "");
+      items.push(`<div class="alert ${esc(s)}"><div class="head"><b>${esc(g.name)}</b> · ${esc(k.id)}${statusBadge(s)}</div><div class="action">${next}</div>${cmdBlock(k.command)}<div class="actions"><button data-go="${g.wt}" data-id="${esc(k.id)}">${t("todo.open")}</button></div></div>`);
+    }
+    if (k.status === "done") done.push(`${g.name}/${k.id}`);
+  }));
+  if (done.length)
+    items.push(`<div class="alert done">${t("todo.clean", { n: done.length, ids: done.join(", ") })}<div class="actions"><button id="clean-all" class="danger">${t("clean.all")}</button></div></div>`);
+  setHTML($("todo"), items.join(""));
+  $("todo").querySelectorAll("[data-go]").forEach(b => b.onclick = () => select(+b.dataset.go, b.dataset.id));
+  if ($("clean-all")) $("clean-all").onclick = () => openCleanup("all=done", true);
+  const waiting = attention.some(g => g.alerts.some(a => !(sel && g.wt === sel.wt))) || items.length;
+  $("waiting-title").innerHTML = t(sel ? "waiting.elsewhere" : "waiting.title");
+  $("waiting").hidden = !waiting;
+  setHTML($("legend"), (waiting ? "" : t("waiting.none") + " ") + `<details><summary>${t("legend.more")}</summary>${t("legend.text")}</details>`);
+}
+
+// An alert answered where it shows: a question, a permission or a session's turn, while the hook
+// holds it for the page. Not held, it says where to answer and, when there is one, the command.
+function alertBody(a, n) {
+  if (a.kind === "question") {
+    const qs = (a.questions || []).map((qq, i) => `<div class="q">${esc(qq.header ? qq.header + ": " : "")}${esc(qq.question)}</div>` +
+      qq.options.map((o, j) => `<label><input type="${qq.multiSelect ? "checkbox" : "radio"}" name="a${n}q${i}" value="${j}"${a.held ? "" : " disabled"}> ${esc(o.label)} <span class="opt-d">${esc(o.description)}</span></label>`).join("") +
+      (a.held ? `<label>${qq.multiSelect ? "" : `<input type="radio" name="a${n}q${i}" value="other"> `}${t("alert.other")} <input type="text" data-other="${i}" style="width:min(420px,100%)"></label>` : "")).join("");
+    const foot = a.held ? `<div class="actions"><button class="primary" data-send="${n}">${t("alert.send")}</button><button data-release="${n}">${t("alert.release")}</button></div>`
+      : a.answers ? `<div class="meta">${t("alert.notheld")}</div>`
+      : `<div class="meta">${t("alert.off", { wt: a.wtName, cmd: "" })}</div><div class="actions"><button class="primary" data-switch="answers" data-wt="${a.wt}" data-on="1">${t("switch.turn-on.answers")}</button></div>${cmdBlock(a.command || `cd ${q(a.path || ".")} && bash .claude/kit/scripts/work.sh ui answers on`)}`;
+    return qs + foot;
+  }
+  const detail = `<details><summary>${t("lane.more")}</summary><div class="meta">${esc(a.detail)}</div></details>`;
+  if (a.kind === "permission")
+    return `<div class="action">${t(a.held ? "perm.held" : "action.approve-in-terminal", { tool: a.tool || "" })}</div>${detail}` +
+      (a.held ? `<div class="actions"><button class="primary" data-allow="${n}">${t("perm.allow")}</button><button class="danger" data-deny="${n}">${t("perm.deny")}</button><button data-release="${n}">${t("alert.release")}</button></div>` : "");
+  return `<div class="meta">${esc(a.detail).slice(0, 600)}</div>` + (a.held
+    ? `<textarea rows="3" data-msg="${n}" placeholder="${esc(t("turn.placeholder"))}" style="margin-top:6px"></textarea><div class="actions"><button class="primary" data-reply="${n}">${t("turn.send")}</button><button data-release="${n}">${t("alert.release")}</button></div>`
+    : a.turns ? `<div class="action">${t("action.prompt-session", { wt: a.wtName })}</div>`
+    : `<div class="action">${t("turn.off", { wt: a.wtName })}</div><div class="actions"><button class="primary" data-switch="turns" data-wt="${a.wt}" data-on="1">${t("switch.turn-on.turns")}</button></div>${cmdBlock(`cd ${q(a.path || ".")} && bash .claude/kit/scripts/work.sh ui turns on`)}`);
+}
+// Alerts the dev dismissed, per viewer: an alert is a session waiting, and it comes back as a new
+// one when that session waits again.
+const DISMISS_KEY = "agent-flow-dismissed";
+const akey = (a) => [a.wt, a.session, a.agent, a.kind, a.since].join("/");
+let dismissed = new Set();
+try { dismissed = new Set(JSON.parse(localStorage.getItem(DISMISS_KEY) || "[]")) } catch (e) {}
+function saveDismissed() { try { localStorage.setItem(DISMISS_KEY, JSON.stringify([...dismissed].slice(-300))) } catch (e) {} }
+function showAttention() {
+  const every = attention.flatMap(g => g.alerts.map(a => ({ ...a, wt: g.wt, wtName: g.name, answers: g.answers, turns: g.turns, path: g.path })));
+  document.title = (every.length ? `(${every.length}) ` : "") + "Foreman";
+  const all = every.filter(a => !(lastTask && sel && a.wt === sel.wt) && !dismissed.has(akey(a)));
+  const hidden = every.filter(a => dismissed.has(akey(a)));
+  const key = (a) => [a.wt, a.session, a.agent, a.kind, a.since].join("/");
+  if (seenAlerts === null) seenAlerts = new Set(every.map(key));
+  else every.forEach(a => {
+    if (seenAlerts.has(key(a))) return;
+    seenAlerts.add(key(a));
+    beep();
+    if ("Notification" in window && Notification.permission === "granted")
+      // Kind and tool only: the OS keeps notifications, and the detail may carry a command line.
+      new Notification(`${a.wtName}: ${t("kind." + a.kind)}`, { body: a.tool || "", tag: key(a) });
+  });
+  // Re-rendered only when the set changes, so a half-written answer survives the refresh.
+  const sig = JSON.stringify([lang, all.map(a => [key(a), a.held, a.qid, a.answers, a.turns]), hidden.length]);
+  if (sig === attnSig) return;
+  attnSig = sig;
+  $("attn").innerHTML = all.map((a, n) => {
+    const who = a.agent === "main" ? t("alert.main") : t("alert.agent", { id: a.agent.slice(0, 12) });
+    return `<div class="alert ${esc(a.kind)}" data-n="${n}"><div class="head">${HAND(16)} <button type="button" class="dismiss" data-dismiss="${esc(akey(a))}" title="${esc(t("dismiss"))}">×</button><b>${esc(a.wtName)}</b> · <span>${t("kind." + a.kind)}</span> · ${who} · <span class="meta">${t("alert.since", { time: new Date(a.since * 1000).toLocaleTimeString(lang === "pt" ? "pt-BR" : "en") })}</span></div><div class="meta">${t("kind." + a.kind + ".m")}</div>${alertBody(a, n)}</div>`;
+  }).join("");
+  if (hidden.length) $("attn").insertAdjacentHTML("beforeend", `<details class="dismissed"><summary>${t("dismissed.count", { n: hidden.length })}</summary>${hidden.map(a => `<div class="alert ${esc(a.kind)}"><b>${esc(a.wtName)}</b> · ${t("kind." + a.kind)} <button type="button" data-restore="${esc(akey(a))}">${t("dismiss.restore")}</button></div>`).join("")}</details>`);
+  $("attn").querySelectorAll("[data-dismiss]").forEach(b => b.onclick = () => { dismissed.add(b.dataset.dismiss); saveDismissed(); attnSig = ""; tick() });
+  $("attn").querySelectorAll("[data-restore]").forEach(b => b.onclick = () => { dismissed.delete(b.dataset.restore); saveDismissed(); attnSig = ""; tick() });
+  wireAlerts($("attn"), all);
+}
+function wireAlerts(box, all) {
+  const send = async (a, extra, el) => {
+    const r = await post("api/answer", { wt: a.wt, session: a.session, agent: a.agent, qid: a.qid, ...extra });
+    if (!r.ok) el.insertAdjacentHTML("beforeend", await errorText(r));
+    else { el.querySelectorAll("button,input,textarea").forEach(i => i.disabled = true); el.insertAdjacentHTML("beforeend", `<div class="ok">${t("alert.sent")}</div>`); setTimeout(tick, 300) }
+  };
+  const at = (b, attr) => all[+b.dataset[attr]];
+  box.querySelectorAll("[data-release]").forEach(b => b.onclick = () => send(at(b, "release"), { release: true }, b.closest(".alert, .pop")));
+  box.querySelectorAll("[data-allow]").forEach(b => b.onclick = () => send(at(b, "allow"), { behavior: "allow" }, b.closest(".alert, .pop")));
+  box.querySelectorAll("[data-deny]").forEach(b => b.onclick = () => send(at(b, "deny"), { behavior: "deny" }, b.closest(".alert, .pop")));
+  box.querySelectorAll("[data-reply]").forEach(b => b.onclick = () => {
+    const el = b.closest(".alert, .pop"), text = el.querySelector("[data-msg]").value;
+    if (!text.trim()) return;
+    send(at(b, "reply"), { message: text }, el);
+  });
+  box.querySelectorAll("[data-send]").forEach(b => b.onclick = () => {
+    const n = +b.dataset.send, a = all[n], el = b.closest(".alert, .pop");
+    const answers = a.questions.map((qq, i) => {
+      const picked = [...el.querySelectorAll(`input[name="a${n}q${i}"]:checked`)].map(x => x.value);
+      const text = el.querySelector(`input[data-other="${i}"]`).value.trim();
+      const options = picked.filter(v => v !== "other").map(Number);
+      const useOther = qq.multiSelect ? text : (picked.includes("other") || !options.length) ? text : "";
+      return { options: qq.multiSelect || !useOther ? options : [], other: useOther };
+    });
+    send(a, { answers }, el);
+  });
+}
+
+async function showTask() {
+  const d = sel && await getJSON(`api/task?wt=${sel.wt}&id=${encodeURIComponent(sel.id)}`);
+  lastTask = d;
+  if (!d) {
+    $("body").hidden = true; $("title").textContent = "Foreman"; $("where").textContent = "";
+    setHTML($("now"), `<div class="meta">${t("no.task")}</div>`);
+    return;
+  }
+  $("body").hidden = false;
+  $("title").textContent = d.id + (d.title ? " · " + d.title : "");
+  const { list, now } = steps(d);
+  // Where the dev is: the worktree, the task and the step it is at, as a path.
+  setHTML($("where"), `<span class="crumb">${esc(d.worktree)}</span>${d.branch ? `<span class="crumb">${esc(d.branch)}</span>` : ""}<span class="crumb">${esc(d.id)}</span><span class="crumb here">${list[now].label}</span>` +
+    (d.lane ? `<span class="meta"> · ${t("where.extra", { lane: word("lane.", d.lane), rounds: d.rounds ?? 0, max: d.max_rounds ?? 3, clarified: d.clarified ?? 0 })}</span>` : ""));
+  showNow(d, list, now);
+  setTab(tab);
+  showTree(d, list, now);
+  showOffice(d, list, now);
+  setHTML($("rulings"), (d.rulings || []).length ? d.rulings.slice(-12).map(rulingHTML).join("") : `<div class="meta">${t("rulings.none")}</div>`);
+  const evs = d.events.slice(-40).reverse();
+  $("events-sum").innerHTML = t("h.events", { n: evs.length });
+  setHTML($("feed"), evs.map(e => `<tr><td>${ago(e.t)}</td><td>${esc(roleName(e.type || e.agent))}</td><td>${esc(evName(e.ev))}${e.tool ? " " + esc(e.tool) : ""}</td><td class="d">${esc(e.detail)}</td></tr>`).join(""));
+}
+
+// The task's steps, and the one it is at.
+function steps(d) {
+  const lenses = d.stages.filter(s => s.needs_verdict), retro = d.stages.find(s => s.agent === "retrospective");
+  const before = d.stages.filter(s => !s.needs_verdict && s !== retro);
+  const verdicts = lenses.filter(s => s.verdict).length, anyFindings = lenses.some(s => s.verdict === "PASS_WITH_FINDINGS");
+  const list = [{ key: "purpose", label: t("tl.purpose"), ok: true, role: "foreman" }];
+  before.forEach(s => list.push({ key: STAGE_STEP[s.agent] || "contract", label: STAGE_STEP[s.agent] ? t("tl." + STAGE_STEP[s.agent]) : esc(roleName(s.agent)), ok: s.written, role: s.agent, stage: s }));
+  const reviewed = lenses.length > 0 && verdicts === lenses.length;
+  list.push({ key: "reviews", label: t("tl.reviews", { n: verdicts, total: lenses.length }), ok: reviewed, lenses });
+  list.push({ key: "decision", label: reviewed && !anyFindings ? t("tl.decision.none") : t("tl.decision"), ok: reviewed && (!anyFindings || ["ready-for-mr", "done"].includes(d.status)), role: "main" });
+  if (retro) list.push({ key: "retro", label: t("tl.retro"), ok: retro.written, role: "retrospective", stage: retro });
+  list.push({ key: "closed", label: t("tl.closed"), ok: d.status === "done" });
+  const now = d.status === "done" ? list.length - 1 : Math.max(0, list.findIndex(s => !s.ok));
+  return { list, now };
+}
+
+// The agent a hand belongs to: an alert of this task's worktree for that agent id, or a stage
+// that stopped and asks for context.
+function handOf(d, lane) {
+  const g = attention.find(x => x.name === d.worktree);
+  const alert = g && g.alerts.find(a => a.agent === lane.agent || (lane.type === "main" && a.agent === "main"));
+  if (alert) return { kind: "alert", alert: { ...alert, wt: g.wt, wtName: g.name, answers: g.answers, turns: g.turns, path: g.path } };
+  if (lane.state === "blocked") return { kind: "blocked" };
+  return null;
+}
+const lanesOf = (d) => { const out = {}; d.agents.forEach(l => { const k = l.type || "main"; if (!out[k] || l.seen > out[k].seen) out[k] = l }); return out };
+const DEV_STEPS = ["fix-fail", "open-mr", "fix-mr-check", "mark-done", "clean-up", "clarify", "unblock"];
+
+// "Now": one line for the dev, NEEDS YOU or WAIT, and right under it the thing to do or who works.
+function showNow(d, list, now) {
+  const g = attention.find(x => x.name === d.worktree);
+  const alerts = g ? g.alerts.map(a => ({ ...a, wt: g.wt, wtName: g.name, answers: g.answers, turns: g.turns, path: g.path })) : [];
+  const open = (d.findings || []).filter(x => x.view === "needs-you" && x.state === "open");
+  const items = [];
+  alerts.forEach((a, n) => items.push(`<div class="alert ${esc(a.kind)}" data-n="${n}"><div class="head">${HAND(16)} <b>${t("kind." + a.kind)}</b> · ${a.agent === "main" ? t("alert.main") : esc(roleName((d.agents.find(l => l.agent === a.agent) || {}).type || "")) || t("alert.agent", { id: a.agent.slice(0, 12) })}</div>${alertBody(a, n)}</div>`));
+  if (open.length) items.push(`<div class="alert findings"><div class="head"><b>${t("now.findings", { n: open.length })}</b></div>${open.map(findingRow).join("")}</div>`);
+  const s = shown(d);
+  if (DEV_STEPS.includes(d.next_step) && !(d.next_step === "fix-fail" && !open.length && (d.findings || []).some(x => x.view === "agent"))) {
+    const buttons = [];
+    if (d.closable && d.status !== "done" && ["open-mr", "mark-done", "fix-mr-check"].includes(d.next_step)) buttons.push(`<button id="close-one">${t("close.button")}</button>`);
+    if (d.status === "done") buttons.push(`<button id="clean-one" class="danger">${t("clean.button")}</button>`);
+    const ask = { "fix-fail": "prompt.fail", unblock: "prompt.unblock" }[d.next_step];
+    const command = d.command || (ask ? sessionCmd(d.path || ".", ask, d.id) : null);
+    items.push(`<div class="alert ${esc(s)}"><div class="action">${has("next." + d.next_step) ? t("next." + d.next_step, { id: d.id, wt: d.worktree, error: (d.mr && d.mr.error) || "" }) : esc(d.next_step)}</div>${ask ? `<div class="meta">${t("session.none")}</div>` : ""}${cmdBlock(command)}${buttons.length ? `<div class="actions">${buttons.join("")}</div>` : ""}</div>`);
+  }
+  const act = items.length > 0;
+  let body;
+  if (act) body = items.join("");
+  else {
+    const working = Object.values(lanesOf(d)).filter(l => l.state === "running" && l.type !== "main");
+    body = working.length
+      ? working.map(l => `<div class="who">${robot(l.type, "running", 28)}<b>${esc(roleName(l.type))}</b> <span class="meta">${l.last ? esc(l.last) : t("lane.state.running")} · ${t("lane.since", { ago: ago(l.start) })}</span></div>`).join("")
+      : `<div class="action">${d.next_step && has("next." + d.next_step) ? t("next." + d.next_step, { id: d.id, wt: d.worktree, error: "" }) : statusMeaning(s)}</div>`;
+  }
+  const mr = d.mr;
+  const extra = [];
+  if (mr && !mr.error && !mr.iid && mr.state === "merged") extra.push(`<span class="meta">${t("mr.link.git")}</span>`);
+  else if (mr && mr.web_url && /^https?:\/\//.test(mr.web_url)) extra.push(`<a href="${esc(mr.web_url)}" target="_blank" rel="noopener">${t("mr.link", { iid: mr.iid, state: has("mr." + mr.state) ? t("mr." + mr.state) : mr.state })}</a>`);
+  else if (mr && mr.error && d.status !== "done") extra.push(`<span class="warn">${has("mr." + mr.error) ? t("mr." + mr.error) : t("mr.error", { error: mr.error })}</span>`);
+  if (d.warning) extra.push(`<span class="bad">${has("warning." + d.warning) ? t("warning." + d.warning) : esc(d.warning)}</span>`);
+  if (d.closed_by === "work.sh") extra.push(`<span class="meta">${t("closed.work.sh")}</span>`);
+  setHTML($("now"), `<div class="now ${act ? "act" : "wait"}"><div class="verb">${t(act ? "now.act" : "now.wait")}</div><div class="nowbody"><div class="nowhead">${statusBadge(s)} <span class="meta">${statusMeaning(s)}</span></div>${body}${extra.length ? `<div class="extra">${extra.join(" · ")}</div>` : ""}${switchesLine(sel.wt)}</div></div>`);
+  wireAlerts($("now"), alerts);
+  wireFindings($("now"), d);
+  if ($("clean-one")) $("clean-one").onclick = () => openCleanup(`wt=${sel.wt}&id=${encodeURIComponent(d.id)}`, false);
+  if ($("close-one")) $("close-one").onclick = () => openClose(d, sel.wt);
+}
+
+// Findings, each with who acts on it, and fix or accept when it waits on the dev.
+const LENS_ROLE = { contract: "reviewer", security: "security-reviewer", qa: "qa-reviewer", product: "product-reviewer" };
+const FSTATES = ["needs-you", "agent", "fixing", "fixed", "accepted"];
+function who(x) {
+  return x.view === "agent" ? t("fstate.agent.m", { agent: roleName(x.actor) })
+    : x.view === "fixing" ? t("fstate.fixing.m", { agent: roleName(x.actor) })
+    : x.view === "fixed" ? t("fstate.fixed.m") : x.view === "accepted" ? t("fstate.accepted.m")
+    : t(x.reopened ? "fstate.reopened.m" : x.verdict === "FAIL" ? "fstate.capped.m" : "fstate.needs-you.m");
+}
+function findingRow(x) {
+  const sev = `<span class="sev ${esc(x.severity)}">${has("sev." + x.severity) ? t("sev." + x.severity) : esc(x.severity)}</span>`;
+  const choose = x.view === "needs-you" && x.state === "open"
+    ? `<div class="actions"><button class="primary" data-fix="${esc(x.key)}">${t("fpick.fix", { agent: roleName(x.route || "executor") })}</button><button data-accept="${esc(x.key)}">${t("fpick.accept")}</button></div>` : "";
+  return `<div class="finding ${esc(x.view)}"><div class="fhead">${sev}<span class="ftext">${esc(lensName(x.lens))}: ${esc(x.summary)}</span><span class="fstate ${esc(x.view)}">${t("fstate." + x.view)}</span></div><div class="factor">${who(x)}</div>${choose}</div>`;
+}
+function wireFindings(box, d) {
+  const decide = (b, key, decision) => {
+    const f = (d.findings || []).find(x => x.key === key) || {};
+    const dlg = $("dlg");
+    dlg.innerHTML = `<h3>${t("decide.title." + decision)}</h3><div class="ftext">${esc(lensName(f.lens))}: ${esc(f.summary)}</div>
+      <div class="meta">${t("decide." + decision + ".m")}</div><div id="decide-msg"></div>
+      <div class="actions"><button class="primary" id="decide-go">${t("decide.confirm")}</button><button data-close>${t("clean.cancel")}</button></div>`;
+    if (!dlg.open) dlg.showModal();
+    dlg.querySelector("[data-close]").onclick = () => dlg.close();
+    $("decide-go").onclick = async () => {
+      $("decide-go").disabled = true;
+      const r = await post("api/findings-decision", { wt: sel.wt, id: d.id, key, decision });
+      if (r.ok) { dlg.close(); tick() } else { $("decide-msg").innerHTML = await errorText(r); $("decide-go").disabled = false }
+    };
+  };
+  box.querySelectorAll("[data-fix]").forEach(b => b.onclick = () => decide(b, b.dataset.fix, "fix"));
+  box.querySelectorAll("[data-accept]").forEach(b => b.onclick = () => decide(b, b.dataset.accept, "accepted"));
+}
+
+// The task as a tree: each step a node, the reviews with their findings as children, a step's
+// file under it when the dev opens it. The node the task is at says "you are here".
+let tab = "tree";
+try { tab = localStorage.getItem("agent-flow-tab") === "office" ? "office" : "tree" } catch (e) {}
+function setTab(name) {
+  tab = name;
+  try { localStorage.setItem("agent-flow-tab", tab) } catch (e) {}
+  $("tree").hidden = tab !== "tree"; $("plan").hidden = tab !== "office";
+  document.querySelectorAll("[data-tab]").forEach(b => b.classList.toggle("on", b.dataset.tab === tab));
+}
+document.querySelectorAll("[data-tab]").forEach(b => b.onclick = () => { setTab(b.dataset.tab); if (lastTask) { $("plan").dataset.html = ""; showTask() } });
+const openNodes = new Set();
+function showTree(d, list, now) {
+  const lanes = lanesOf(d);
+  const lensOf = (s) => (/^04-review-(.+)\.md$/.exec(s.file || "") || [])[1] || s.agent;
+  const mark = (i, s) => i === now ? (d.status === "FAIL" || d.status === "blocked" ? "bad cur" : "cur") : s.ok ? "ok" : "todo";
+  const glyph = (cls) => cls.startsWith("bad") ? "✖" : cls === "cur" ? "▶" : cls === "ok" ? "✓" : "○";
+  const fileOf = (s) => s && openNodes.has(s.file) ? `<pre class="file">${esc(d.files[s.file] || t("file.missing", { file: s.file }))}</pre>` : "";
+  const nodes = list.map((st, i) => {
+    const cls = mark(i, st);
+    const here = i === now ? `<span class="you">${t("tree.here")}</span>` : "";
+    let kids = "";
+    if (st.key === "purpose" && openNodes.has("purpose")) kids = `<pre class="file">${esc(purposeText(d))}</pre>`;
+    if (st.stage) kids = fileOf(st.stage);
+    if (st.key === "reviews") kids = `<ul>${st.lenses.map(s => {
+      const lane = lanes[s.agent], v = s.verdict;
+      const vc = v === "FAIL" ? "bad" : v === "PASS_WITH_FINDINGS" ? "warn" : v ? "ok" : lane && lane.state === "running" ? "run" : "todo";
+      const fs = (d.findings || []).filter(x => x.lens === lensOf(s));
+      return `<li class="node ${vc}"><div class="row" data-node="${esc(s.file)}">${robot(s.agent, v === "FAIL" ? "failed" : v ? "ok" : lane ? lane.state : "idle", 22)}<b>${esc(roleName(s.agent))}</b><span class="meta">${v ? esc(verdictName(v)) : lane ? t("lane.state." + (lane.state || "idle")) : t("tree.waiting")}</span>${fs.length ? `<span class="count">${fs.length}</span>` : ""}</div>${fileOf(s)}${fs.length ? `<div class="kids">${fs.map(findingRow).join("")}</div>` : ""}</li>`;
+    }).join("")}</ul>`;
+    if (st.key === "decision") {
+      const c = d.findings_counts || {};
+      kids = FSTATES.some(k => c[k]) ? `<div class="kids fsum">${FSTATES.filter(k => c[k]).map(k => `<span class="fstate ${k}">${t("fcount." + k, { n: c[k] })}</span>`).join("")}</div>` : "";
+      if (d.findings_sent) kids += `<div class="kids"><div class="ok">${t("fpick.sent.now", { wt: d.worktree })}</div>${cmdBlock(sessionCmd(d.path || ".", "prompt.apply-findings", d.id))}</div>`;
+    }
+    const clickable = st.stage || st.key === "purpose";
+    return `<li class="node ${cls}"><div class="row${clickable ? " click" : ""}"${clickable ? ` data-node="${esc(st.stage ? st.stage.file : "purpose")}"` : ""}><span class="g">${glyph(cls)}</span>${st.role ? robot(st.role, st.ok ? "ok" : i === now ? "running" : "idle", 22) : ""}<b>${st.label}</b>${st.role && st.role !== "foreman" && st.role !== "main" ? `<span class="meta">${esc(roleName(st.role))}</span>` : ""}${here}</div>${kids}</li>`;
+  }).join("");
+  setHTML($("tree"), `<ul class="tree">${nodes}</ul>`);
+  $("tree").querySelectorAll("[data-node]").forEach(r => r.onclick = (ev) => {
+    if (ev.target.closest("button")) return;
+    const k = r.dataset.node;
+    openNodes.has(k) ? openNodes.delete(k) : openNodes.add(k);
+    showTree(d, list, now);
+  });
+  wireFindings($("tree"), d);
+}
+
+// The office: a floor plan in the spirit of a virtual office. One room per stage (flow.json
+// "rooms"), each agent a robot at its desk with its name tag, a bubble while it works and a raised
+// hand when it needs the dev; "You" sit with the main session; the task's card stands in the room
+// of its step.
+function showOffice(d, list, now) {
+  if (tab !== "office") return;
+  const here = stepRoom(list[now]);
+  const lanes = lanesOf(d), L = layout();
+  const stageOf = (r) => d.stages.find(s => s.agent === r);
+  const pct = ([x, y]) => `left:${x / 10}%;top:${y / L.H * 100}%`;
+  const labels = L.rooms.map(({ r, x, y }) => `<span class="rlabel${r.id === here ? " here" : ""}" style="${pct([x + 15, y + 12])}">${esc(roomName(r))}</span>`).join("");
+  const bots = Object.entries(L.seats).map(([r, xy]) => {
+    const lane = lanes[r], st = stageOf(r);
+    const state = lane ? (lane.state === "ok" && st && st.verdict === "FAIL" ? "failed" : lane.state) : st && st.written ? "ok" : "idle";
+    const hand = lane ? handOf(d, lane) : null;
+    const bubble = hand ? '<span class="bubble hand" title="' + esc(t("office.hand")) + '">' + HAND(22) + '</span>' : state === "running" ? '<span class="bubble">…</span>' : "";
+    // Reviewers sit side by side: their tag says the lens, the full role is in the robot's card.
+    const lens = Object.keys(LENS_ROLE).find(k => LENS_ROLE[k] === r);
+    const name = r === "main" ? t("office.you") : lens ? lensName(lens) : roleName(r);
+    return `<button type="button" class="seat ${esc(state)}${openBot === r ? " open" : ""}" data-bot="${esc(r)}" style="${pct(xy)}"><span class="tag"><i class="dot ${esc(state)}"></i>${esc(name)}</span>${bubble}${robot(r === "main" ? "foreman" : r, state, 44)}</button>`;
+  }).join("");
+  const room = L.rooms.find(x => x.r.id === here) || L.rooms[0];
+  const card = `<span class="token" style="${pct([room.x + room.w / 2, room.y + 46])}">📋 ${esc(d.id)}</span>`;
+  const html = `<div class="floor" style="aspect-ratio:1000/${L.H}">${floorSVG(L)}${labels}${bots}${card}</div>`;
+  const plan = $("plan");
+  if (plan.dataset.html !== html) {
+    plan.innerHTML = html + `<div id="pop"></div>`;
+    plan.dataset.html = html;
+    plan.querySelectorAll("[data-bot]").forEach(b => b.onclick = () => { openBot = openBot === b.dataset.bot ? null : b.dataset.bot; plan.dataset.html = ""; showOffice(lastTask, list, now) });
+  }
+  showPop(d, lanes);
+}
+// The robot the dev clicked: what it does, and what it waits for, answerable right there.
+function showPop(d, lanes) {
+  const pop = $("pop");
+  if (!pop) return;
+  if (!openBot) { setHTML(pop, ""); return }
+  const lane = lanes[openBot], st = d.stages.find(s => s.agent === openBot);
+  const hand = lane ? handOf(d, lane) : null;
+  const state = lane ? lane.state || "idle" : st && st.written ? "ok" : "idle";
+  const when = lane ? (lane.end ? t("lane.took", { s: Math.round(lane.end - lane.start) }) : t("lane.since", { ago: ago(lane.start) })) : "";
+  let html = `<div class="pop"><div class="head">${robot(openBot === "main" ? "foreman" : openBot, state, 44)}<div><b>${esc(openBot === "main" ? t("office.you") : roleName(openBot))}</b><div class="meta">${has("lane.state." + state) ? t("lane.state." + state) : esc(state)}${when ? " · " + when : ""}</div></div></div>`;
+  if (st) html += `<div class="meta">${t("pop.file", { file: st.file })}${st.verdict ? " · " + esc(verdictName(st.verdict)) : ""}</div>`;
+  if (lane && lane.last) html += `<details><summary>${t("lane.more")}</summary><div class="meta">${t("lane.id", { id: String(lane.agent).slice(0, 12), tools: lane.tools, ago: ago(lane.seen) })}</div><div class="detail">${esc(lane.last)}</div></details>`;
+  if (lane && lane.summary) html += `<div class="detail">${esc(lane.summary)}</div>`;
+  if (hand && hand.kind === "alert") html += `<div class="alert ${esc(hand.alert.kind)}" style="margin-top:8px"><div class="head">${HAND(16)} ${t("kind." + hand.alert.kind)}</div>${alertBody(hand.alert, 0)}</div>`;
+  else if (hand) html += `<div class="warn">${t("pop.blocked")}</div>`;
+  else if (!lane) html += `<div class="meta">${t("pop.idle")}</div>`;
+  html += "</div>";
+  if (pop.dataset.html !== html) { pop.innerHTML = html; pop.dataset.html = html; if (hand && hand.kind === "alert") wireAlerts(pop, [hand.alert]) }
+}
+
+// The purpose as written, minus the template: comments, the title line and empty sections.
+function purposeText(d) {
+  const lines = (d.purpose || "").replace(/<!--.*?-->/gs, "").split("\n").slice(1);
+  const out = [];
+  lines.forEach((l, i) => {
+    if (/^#+\s/.test(l)) {
+      const rest = lines.slice(i + 1), next = rest.findIndex(x => /^#+\s/.test(x));
+      if (!(next < 0 ? rest : rest.slice(0, next)).some(x => x.trim())) return;
+    }
+    out.push(l);
+  });
+  return out.join("\n").replace(/\n{3,}/g, "\n\n").trim().split("\n").slice(0, 30).join("\n");
+}
+// A ruling of ledger.md: the protocol's English keys become labels in the dev's language.
+function rulingHTML(r) {
+  const parts = String(r).replace(/^Ruling:\s*/, "").split(/\s*\|\s*/);
+  const label = (p) => { const m = /^(why|cost if wrong):\s*(.*)$/i.exec(p); return m ? `<span class="meta">${t(m[1].toLowerCase() === "why" ? "ruling.why" : "ruling.cost")}</span> ${esc(m[2])}` : esc(p) };
+  return `<div><b>${esc(parts[0])}</b>${parts.slice(1).map(p => ` · ${label(p)}`).join("")}</div>`;
+}
+
+
+// The worktree's switches: answering questions on the page, and sending the session its next
+// message on the page. Turning one on or off asks first, saying what changes and the risk.
+function switchesLine(wt) {
+  const g = lastGroups.find(x => x.wt === wt), sw = (g && g.switches) || {};
+  const one = (name) => `<button type="button" class="switch${sw[name] ? " on" : ""}" data-switch="${name}" data-wt="${wt}" data-on="${sw[name] ? 0 : 1}" title="${esc(t("switch.about." + name))}"><i></i>${t("switch.label." + name)}: <b>${t(sw[name] ? "switch.on" : "switch.off")}</b></button>`;
+  return `<div class="switches"><span class="meta">${t("switch.title")}</span>${one("answers")}${one("turns")}</div>`;
+}
+document.addEventListener("click", (ev) => {
+  const b = ev.target.closest && ev.target.closest("[data-switch]");
+  if (!b) return;
+  const name = b.dataset.switch, wt = +b.dataset.wt, on = b.dataset.on === "1";
+  const dlg = $("dlg");
+  dlg.innerHTML = `<h3>${t("switch.confirm.title." + (on ? "on" : "off"), { what: t("switch.label." + name) })}</h3>
+    <div>${t("switch.about." + name)}</div>${on ? `<div class="warn" style="margin-top:8px">${t("switch.risk")}</div>` : ""}
+    <div id="switch-msg"></div><div class="actions"><button class="primary" id="switch-go">${t(on ? "switch.do.on" : "switch.do.off")}</button><button data-close>${t("clean.cancel")}</button></div>`;
+  if (!dlg.open) dlg.showModal();
+  dlg.querySelector("[data-close]").onclick = () => dlg.close();
+  $("switch-go").onclick = async () => {
+    $("switch-go").disabled = true;
+    const r = await post("api/switch", { wt, name, on });
+    if (r.ok) { dlg.close(); attnSig = ""; tick() } else { $("switch-msg").innerHTML = await errorText(r); $("switch-go").disabled = false }
+  };
+});
+
+// Mark as done: the same marker as `work.sh done <ID>`, after a confirmation.
+function openClose(d, wt) {
+  const dlg = $("dlg"), warns = [];
+  if (d.status === "FAIL" || d.stages.some(s => s.verdict === "FAIL")) warns.push(t("close.warn.fail"));
+  if (d.findings_open > 0) warns.push(t("close.warn.open-findings", { n: d.findings_open }));
+  if (d.status === "running") warns.push(t("close.warn.running"));
+  dlg.innerHTML = `<h3>${t("close.title", { id: d.id })}</h3><div class="meta">${t("close.intro", { id: d.id })}</div>${warns.map(w => `<div class="bad">${w}</div>`).join("")}
+    <div id="close-msg"></div><div class="actions"><button class="primary" id="close-go">${t("close.confirm")}</button><button data-close>${t("clean.cancel")}</button></div>`;
+  if (!dlg.open) dlg.showModal();
+  dlg.querySelector("[data-close]").onclick = () => dlg.close();
+  $("close-go").onclick = async () => {
+    $("close-go").disabled = true;
+    const r = await post("api/close", { wt, id: d.id });
+    if (r.ok) { $("close-msg").innerHTML = `<div class="ok">${t("close.ok")}</div><div class="actions"><button id="close-clean" class="danger">${t("clean.button")}</button></div>`; $("close-clean").onclick = () => openCleanup(`wt=${wt}&id=${encodeURIComponent(d.id)}`, false) }
+    else { $("close-msg").innerHTML = await errorText(r); $("close-go").disabled = false }
+    tick();
+  };
+}
+
+// Cleanup: the server computes the plan and its hash; the page posts the hash and, per task,
+// only items the plan offered and did not refuse; a plan that changed is refused (409).
+let cleanPlan = null;
+const ITEMS = ["state", "worktree", "memory"];
+const ul = (xs) => xs && xs.length ? `<ul>${xs.map(x => `<li>${esc(x)}</li>`).join("")}</ul>` : "";
+const field = (key, xs) => xs && (!Array.isArray(xs) || xs.length) ? `<div class="meta">${t("clean.key." + key)}</div>${ul(Array.isArray(xs) ? xs : [xs])}` : "";
+function itemBody(k, it) {
+  if (k === "state") return field("paths", it.paths) + (it.cancels_memory_request ? `<div class="warn">${t("clean.cancels.memory")}</div>` : "");
+  if (k === "worktree") {
+    const ign = it.ignored || [], n = it.ignored_count || ign.length;
+    return field("path", it.path) + (it.delete_branch === false ? `<div class="meta">${t("clean.key.branch.kept", { branch: it.branch })}</div>` : field("branch", it.branch)) +
+      field("tasks", it.tasks) + (n ? `<details><summary>${t("clean.key.ignored", { n })}</summary>${ul(ign)}</details>` : "") +
+      (it.sensitive && it.sensitive.length ? `<div class="bad">${t("clean.key.sensitive")}</div>${ul(it.sensitive)}` : "");
+  }
+  return field("request", it.request) + field("session_worktree", it.session_worktree) + field("session_worktree_if_removed", it.session_worktree_if_removed);
+}
+async function openCleanup(query, all) {
+  const dlg = $("dlg");
+  dlg.innerHTML = `<h3>${t(all ? "clean.title.all" : "clean.title")}</h3><div class="meta">${t("clean.loading")}</div>`;
+  if (!dlg.open) dlg.showModal();
+  let plan;
+  try { plan = await getJSON("api/cleanup-plan?" + query) } catch (e) {
+    dlg.innerHTML = `<h3>${t("clean.title")}</h3><div class="bad">${t("dashboard.error", { msg: e.message })}</div><div class="actions"><button data-close>${t("clean.cancel")}</button></div>`;
+    dlg.querySelector("[data-close]").onclick = () => dlg.close();
+    return;
+  }
+  cleanPlan = plan;
+  const targets = (plan && plan.targets) || [];
+  const reason = (r) => has("refuse." + r) ? t("refuse." + r) : esc(r);
+  const html = targets.map((g, n) => {
+    const head = `<b>${esc(g.worktree || "")}</b> · ${esc(g.id)}${g.retro === false ? `<div class="warn">${t("clean.no-retro")}</div>` : ""}`;
+    if (g.refused) return `<div class="target">${head}<div class="bad">${t("clean.refused", { reason: "" })}${reason(g.refused)}</div></div>`;
+    const items = g.items || {};
+    return `<div class="target">${head}` + ITEMS.filter(k => items[k]).map(k => {
+      const it = items[k];
+      const recreate = it.recreate && (!it.refused || it.refused === "dirty") ? `<div class="meta">${t("clean.recreate")}</div>${cmdBlock(it.recreate)}` : "";
+      if (it.refused) return `<label><input type="checkbox" disabled> ${t("clean.item." + k)}</label><div class="bad">${t("clean.refused", { reason: "" })}${reason(it.refused)}</div>${it.refused === "sensitive-files" ? itemBody(k, it) : ""}${it.refused === "unpushed" || it.refused === "no-remote-branch" ? `<div class="meta">${t("refuse.hand")}</div>` : ""}${recreate}`;
+      return `<label><input type="checkbox" data-t="${n}" data-item="${k}"${k === "state" ? " checked" : ""}> ${t("clean.item." + k)}</label>` +
+        (k === "memory" ? `<div class="meta">${t("clean.item.memory.m")}</div>` : "") + itemBody(k, it) + recreate;
+    }).join("") + `</div>`;
+  }).join("") || `<div class="meta">${t("clean.empty")}</div>`;
+  const offered = targets.some(g => !g.refused && ITEMS.some(k => g.items && g.items[k] && !g.items[k].refused));
+  dlg.innerHTML = `<h3>${t(all ? "clean.title.all" : "clean.title")}</h3><div class="meta">${t("clean.intro")}</div>${html}
+    <div id="clean-msg"></div><div class="actions">${offered ? `<button class="danger" id="clean-go">${t("clean.confirm")}</button>` : ""}<button data-close>${t("clean.cancel")}</button></div>`;
+  dlg.querySelector("[data-close]").onclick = () => dlg.close();
+  if ($("clean-go")) $("clean-go").onclick = () => postCleanup(dlg);
+}
+async function postCleanup(dlg) {
+  const msg = $("clean-msg"), targets = cleanPlan.targets || [];
+  const picked = targets.map((g, n) => ({ wt: g.wt, id: g.id,
+    items: [...dlg.querySelectorAll(`input[data-t="${n}"]:checked`)].map(x => x.dataset.item).filter(k => ITEMS.includes(k) && g.items && g.items[k] && !g.items[k].refused) }));
+  if (!picked.some(g => g.items.length)) { msg.innerHTML = `<div class="bad">${t("clean.none.checked")}</div>`; return }
+  dlg.querySelectorAll("button,input").forEach(i => i.disabled = true);
+  const r = await post("api/cleanup", { targets: picked, plan: cleanPlan.plan });
+  if (r.ok) {
+    let res = null;
+    try { res = await r.json() } catch (e) {}
+    const failed = ((res && res.results) || []).filter(x => !x.ok);
+    const why = (e) => has("err." + e) ? t("err." + e) : has("refuse." + e) ? t("refuse." + e) : esc(e);
+    msg.innerHTML = failed.length ? `<div class="bad">${t("clean.partial")}</div><ul>${failed.map(x => `<li>${esc(x.id)} · ${t("clean.item." + x.item)}: ${why(x.error)}</li>`).join("")}</ul>` : `<div class="ok">${t("clean.ok")}</div>`;
+  } else msg.innerHTML = await errorText(r);
+  dlg.querySelector("[data-close]").disabled = false;
+  tick();
+}
+
+// Notifications: browsers ignore a permission request that no click started, so the button asks.
+function notifyState() {
+  const btn = $("notify-btn"), st = $("notify-state");
+  btn.textContent = t("notify.enable");
+  if (!("Notification" in window)) { btn.hidden = true; st.textContent = t("notify.unsupported"); return }
+  const p = Notification.permission;
+  btn.hidden = p !== "default";
+  st.textContent = p === "granted" ? t("notify.on") : p === "denied" ? t("notify.blocked") : t("notify.off");
+}
+$("notify-btn").onclick = () => {
+  if (!("Notification" in window)) return notifyState();
+  Promise.resolve(Notification.requestPermission()).then(notifyState, notifyState);
+  unlockAudio();
+};
+// Sound: a short beep for each new alert, muted by a toggle the browser remembers.
+let muted = false, audio = null;
+try { muted = localStorage.getItem(MUTE_KEY) === "1" } catch (e) {}
+function muteLabel() { $("mute-btn").textContent = muted ? t("sound.off") : t("sound.on") }
+$("mute-btn").onclick = () => { muted = !muted; try { localStorage.setItem(MUTE_KEY, muted ? "1" : "0") } catch (e) {} muteLabel(); unlockAudio() };
+function unlockAudio() {
+  try { audio = audio || new (window.AudioContext || window.webkitAudioContext)(); if (audio.state === "suspended") audio.resume() } catch (e) { audio = null }
+}
+document.addEventListener("click", unlockAudio);
+// A two-note chime (a rising fifth) with a soft attack and a ring that fades: it says "something
+// needs you" without the alarm of a bare beep.
+function beep() {
+  if (muted) return;
+  try {
+    audio = audio || new (window.AudioContext || window.webkitAudioContext)();
+    const out = audio.createGain(), t0 = audio.currentTime;
+    out.gain.value = 0.18;
+    out.connect(audio.destination);
+    [[880, 0], [1318.5, 0.14]].forEach(([freq, at]) => {
+      [[1, "sine", 1], [2, "sine", 0.18], [3, "triangle", 0.06]].forEach(([mult, type, level]) => {
+        const osc = audio.createOscillator(), g = audio.createGain(), start = t0 + at;
+        osc.type = type; osc.frequency.value = freq * mult;
+        g.gain.setValueAtTime(0.0001, start);
+        g.gain.linearRampToValueAtTime(level, start + 0.012);
+        g.gain.exponentialRampToValueAtTime(0.0001, start + 1.1 / mult);
+        osc.connect(g).connect(out); osc.start(start); osc.stop(start + 1.2);
+      });
+    });
+  } catch (e) {}
+}
+
+// Live updates: the server's event stream; when it is refused or drops, a 2 s poll.
+let live = false, poll = null, connecting = true;
+function liveLabel() { const el = $("live"); el.className = "live" + (live ? "" : " off"); el.innerHTML = `<i></i>${t(live ? "live.on" : connecting ? "live.connecting" : "live.off")}` }
+function startPoll() { if (!poll) poll = setInterval(tick, 2000) }
+function connect() {
+  if (!("EventSource" in window)) { startPoll(); return }
+  // The stream takes the page's token: another site cannot hold its connections.
+  const es = new EventSource("api/events?t=" + encodeURIComponent(TOKEN));
+  es.addEventListener("hello", () => { live = true; connecting = false; liveLabel(); if (poll) { clearInterval(poll); poll = null } });
+  es.addEventListener("change", () => tick());
+  es.onerror = () => { es.close(); live = false; connecting = false; liveLabel(); startPoll() };
+}
+
+window.addEventListener("hashchange", () => { openFile = null; openBot = null; tick() });
+
+applyLang();
+tick(); connect();
+// A slow heartbeat refresh keeps "ago" times and live alerts fresh even with the stream up.
+setInterval(() => { if (live) tick() }, 15000);
+</script>
+</body>
+</html>
