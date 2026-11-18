@@ -712,6 +712,10 @@ def step_command(state, tid, wt, root, remote_host=None, forge=None):
         # to the shell history, and this one is copied from the page.
         return (f"cd {q(root)} && {host}read -rs {var} && export {var} && "
                 f"{WORK_SH} ui stop && {WORK_SH} ui start", "shell")
+    if step == "open-mr":
+        # ship.py pushes and opens the PR/MR when flow.json "ship" is on, and otherwise prints the
+        # push and the command for the dev's forge tool: either way one line to run.
+        return f"cd {q(wt)} && python3 .claude/kit/scripts/ship.py {q(tid)}", "shell"
     if step == "mark-done":
         return f"cd {q(wt)} && {WORK_SH} done {tid}", "shell"
     if step == "decide-findings":

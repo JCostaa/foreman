@@ -177,6 +177,14 @@ are decided:
 failure to the dev and let the dev decide; a failing check is never worked around to get the
 PR out.
 
+**Ship (optional).** Write the PR/MR body to `.work/<ID>/pr-body.md` (purpose, the ACs and how
+each is proven, the rulings in `ledger.md`, merge order, what is left open), then run
+`python3 .claude/kit/scripts/ship.py <ID>`. With `"ship": {"enabled": true}` in `flow.json` it
+pushes the task's own branch (never with force, never a base branch) and opens the PR/MR with
+the dev's tool (`gh`, `glab`, or a custom command), and keeps its URL for the dashboard. Off, it
+prints the push and the command for the dev to run. A missing or logged-out tool is named with
+what to run; never ask for a token.
+
 The task is done when its PR or MR is open or merged (the dashboard finds it on GitHub or
 GitLab and links it, and a merge git can see counts too), or when the dev runs
 `bash .claude/kit/scripts/work.sh done [ID]` or clicks "Mark as done" on the dashboard (same

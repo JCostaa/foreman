@@ -244,6 +244,7 @@ def main():
         shutil.rmtree(root)
     merge_order()
     merge_order_uncommitted()
+    ship()
     attention_hooks()
     attention_server()
     wiring()
@@ -393,6 +394,94 @@ def merge_order_uncommitted():
         assert pos["task-b"]["pos"] > max(pos["task-a"]["pos"], pos["task-c"]["pos"]) and pos["task-b"]["total"] == 4 \
             and sorted(pos["task-b"]["after"]) == ["task-a", "task-c"] and pos["task-b"]["pending"] \
             and pos["task-d"]["independent"] and not pos["task-d"]["pending"], pos
+    finally:
+        shutil.rmtree(base)
+
+
+def ship():
+    """ship.py: off by default, it prints the push and the PR/MR command; on, it pushes the task's
+    own branch and opens the PR/MR with the tool picked from the origin (gh for github.com, glab for a
+    GitLab), keeps the URL in mr.json, refuses a base branch, names a missing or logged-out tool, and
+    shell-quotes each value of a custom template."""
+    base = os.path.realpath(tempfile.mkdtemp())
+    try:
+        remote, repo, bin_dir = os.path.join(base, "remote.git"), os.path.join(base, "repo"), os.path.join(base, "bin")
+        os.makedirs(bin_dir)
+        g = lambda *a: subprocess.run(["git", "-C", repo, "-c", "user.name=t", "-c", "user.email=t@t", *a],
+                                      check=True, capture_output=True, text=True).stdout
+        subprocess.run(["git", "init", "-q", "--bare", remote], check=True)
+        os.makedirs(os.path.join(repo, ".claude"))
+        flow = json.load(open(FLOW))
+        json.dump(flow, open(os.path.join(repo, ".claude", "flow.json"), "w"))
+        open(os.path.join(repo, ".gitignore"), "w").write(".work/\n")
+        g("init", "-q", "-b", "main")
+        g("add", "-A")
+        g("commit", "-qm", "init")
+        g("remote", "add", "origin", remote)
+        g("push", "-q", "origin", "main")
+        g("fetch", "-q", "origin")
+        g("symbolic-ref", "refs/remotes/origin/HEAD", "refs/remotes/origin/main")
+        g("remote", "set-url", "origin", "https://github.com/acme/app.git")
+        g("remote", "set-url", "--push", "origin", remote)
+        g("checkout", "-q", "-b", "feat/abc-12")
+        tdir = os.path.join(repo, ".work", "ABC-12")
+        os.makedirs(tdir)
+        open(os.path.join(tdir, "00-purpose.md"), "w").write("# ABC-12 CSV export\n\nThe purpose.\n")
+        open(os.path.join(tdir, "branch"), "w").write("feat/abc-12\n")
+        log = os.path.join(base, "calls.log")
+
+        def tool(name, body):
+            path = os.path.join(bin_dir, name)
+            open(path, "w").write(f"#!/bin/sh\necho \"{name} $*\" >> {log}\n{body}\n")
+            os.chmod(path, 0o755)
+        script = os.path.join(KIT, "scripts", "ship.py")
+
+        def run(*a, path=None):
+            env = dict(os.environ, CLAUDE_PROJECT_DIR=repo, PATH=(path or bin_dir) + os.pathsep + "/usr/bin:/bin")
+            return subprocess.run([sys.executable, script, *a], capture_output=True, text=True, cwd=repo, env=env)
+
+        def set_ship(**cfg):
+            json.dump({**flow, "ship": cfg}, open(os.path.join(repo, ".claude", "flow.json"), "w"))
+
+        # Off by default: the commands to run, nothing pushed, nothing opened.
+        p = run("ABC-12")
+        assert p.returncode == 0 and "git push -u origin feat/abc-12" in p.stdout and "gh pr create" in p.stdout, p.stdout + p.stderr
+        assert not os.path.exists(log), "off: no tool is called"
+        # On, auto picks gh for github.com; a missing gh is named, never a crash.
+        set_ship(enabled=True)
+        p = run("ABC-12", path=os.path.join(base, "empty"))
+        assert p.returncode == 1 and "gh is not installed" in p.stderr, p.stderr
+        tool("gh", 'case "$1" in auth) exit 1;; esac')
+        p = run("ABC-12")
+        assert p.returncode == 1 and "gh auth login" in p.stderr, f"logged out: says what to run: {p.stderr}"
+        tool("gh", 'case "$1" in auth) exit 0;; pr) echo "https://github.com/acme/app/pull/42";; esac')
+        p = run("ABC-12")
+        assert p.returncode == 0 and p.stdout.strip() == "https://github.com/acme/app/pull/42", p.stdout + p.stderr
+        kept = json.load(open(os.path.join(tdir, "mr.json")))
+        assert kept == {"iid": 42, "url": "https://github.com/acme/app/pull/42", "state": "opened", "branch": "feat/abc-12"}, kept
+        assert "feat/abc-12" in subprocess.run(["git", "-C", remote, "branch"], capture_output=True, text=True).stdout, \
+            "the branch was pushed"
+        calls = open(log).read()
+        assert "--base main --head feat/abc-12" in calls and "--draft" in calls, calls
+        # A GitLab origin picks glab.
+        g("remote", "set-url", "origin", "https://gitlab.example.com/acme/app.git")
+        g("remote", "set-url", "--push", "origin", remote)
+        tool("glab", 'case "$1" in auth) exit 0;; mr) echo "https://gitlab.example.com/acme/app/-/merge_requests/7";; esac')
+        p = run("ABC-12")
+        assert p.returncode == 0 and p.stdout.strip().endswith("/merge_requests/7") and "glab mr create" in open(log).read(), \
+            p.stdout + p.stderr
+        # A custom template: each value is one quoted word, never split or run as shell.
+        open(os.path.join(tdir, "00-purpose.md"), "w").write("# ABC-12 Export; rm -rf $HOME `x`\n")
+        tool("pr-tool", 'printf "%s\\n" "$@" > ' + os.path.join(base, "args.txt") + '\necho "https://forge.example.com/pr/9"')
+        set_ship(enabled=True, tool="custom", command="pr-tool --title {title} --into {base}")
+        p = run("ABC-12")
+        args = open(os.path.join(base, "args.txt")).read().splitlines()
+        assert p.returncode == 0 and args == ["--title", "Export; rm -rf $HOME `x`", "--into", "main"], (args, p.stderr)
+        # A base branch never ships.
+        open(os.path.join(tdir, "branch"), "w").write("main\n")
+        g("checkout", "-q", "main")
+        p = run("ABC-12")
+        assert p.returncode == 1 and "base branch" in p.stderr, p.stderr
     finally:
         shutil.rmtree(base)
 
