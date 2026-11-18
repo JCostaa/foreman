@@ -314,6 +314,14 @@ def top_bar(page):
     assert 'if (e.key === "Escape") { e.stopPropagation(); close(true) }' in d and '"focusout"' in d and "btn.focus()" in d
 
 
+def calm_panel(page):
+    """A calm needs panel: no red band, no solid verb block; a capped box fades at its fold."""
+    assert "background:var(--bad); border-radius:9px" not in page, "sidebar counts are not red"
+    assert ".now.act .verb { background:var(--warn)" not in page
+    code = script(page)
+    assert "function foldHints" in code and 'el.classList.toggle("fold", over);' in code and "foldHints();" in code
+
+
 def switches_on_page(page):
     """The worktree's switches are on the page; turning one on or off asks first (with the risk
     when turning on) and posts with the token only from the confirmation."""
@@ -361,7 +369,7 @@ def preferences(page):
     assert 'new EventSource("api/events?t=" + encodeURIComponent(TOKEN))' in page and "startPoll()" in page, "live stream with a poll fallback"
 
 
-CHECKS = (top_bar, sidebar, needs_list, findings_fold, whole_finding, quiet_turns, whole_turn, visible_page, released_holds, not_applicable, both_languages, every_word_translated, whole_commands, answers_from_the_page, office, findings_panel, now_panel, tree, switches_on_page,
+CHECKS = (calm_panel, top_bar, sidebar, needs_list, findings_fold, whole_finding, quiet_turns, whole_turn, visible_page, released_holds, not_applicable, both_languages, every_word_translated, whole_commands, answers_from_the_page, office, findings_panel, now_panel, tree, switches_on_page,
           noise_collapsed, cleanup_wiring, preferences)
 
 
@@ -421,6 +429,8 @@ MUTATIONS = (
     (sidebar, "done open", lambda p: p.replace("if (dd.open !== sideDoneOpen) dd.open = sideDoneOpen;", "dd.open = true;")),
     (top_bar, "Escape ignored", lambda p: p.replace('if (e.key === "Escape") { e.stopPropagation(); close(true) }', "")),
     (top_bar, "theme outside", lambda p: p.replace('    <button id="theme-btn" type="button"></button>\n', "").replace('<div id="menu" class="popover menu" hidden>', '<button id="theme-btn" type="button"></button><div id="menu" class="popover menu" hidden>')),
+    (calm_panel, "red badges", lambda p: p.replace("color:#111; background:var(--warn); border-radius:9px", "color:#fff; background:var(--bad); border-radius:9px")),
+    (calm_panel, "no fold hint", lambda p: p.replace('el.classList.toggle("fold", over);', "")),
     (not_applicable, "na ignored", lambda p: p.replace("${s.na ? t(\"verdict.na\") : v ?", "${v ?")),
     (preferences, "no live stream", lambda p: p.replace('new EventSource("api/events?t=" + encodeURIComponent(TOKEN))', 'new EventSource("api/events")')),
 )

@@ -265,7 +265,18 @@ def menu_step(page, ctx):
     check("menu: Escape closes and returns focus", page.locator("#menu").is_hidden() and page.evaluate("document.activeElement.id") == "menu-btn")
 
 
-STEPS = [needs_step, fold_step, decide_step, sidebar_step, menu_step]
+def fold_hint_step(page, ctx):
+    """A turn's long message is capped and scrolled to its end; a capped box that is not at its end fades."""
+    row = page.locator('#needs [data-row*="s-turn"]')
+    row.locator("[data-row-toggle]").click()
+    box = row.locator("[data-turn-msg]")
+    check("fold: message whole", "Shall I go on?" in box.inner_text())
+    page.evaluate("""() => { const el = document.querySelector('#needs [data-row*="s-turn"] [data-turn-msg]');
+      el.textContent = 'line\\n'.repeat(80) + el.textContent; el.scrollTop = 0; foldHints() }""")
+    check("fold: hint on a capped box", "fold" in box.get_attribute("class") and "at-end" not in box.get_attribute("class"), box.get_attribute("class"))
+
+
+STEPS = [needs_step, fold_step, decide_step, sidebar_step, menu_step, fold_hint_step]
 
 
 def main():
