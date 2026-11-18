@@ -243,6 +243,7 @@ def main():
     finally:
         shutil.rmtree(root)
     merge_order()
+    merge_order_uncommitted()
     attention_hooks()
     attention_server()
     wiring()
@@ -329,6 +330,71 @@ def merge_order():
         shutil.rmtree(repo)
 
 
+def merge_order_uncommitted():
+    """Running tasks keep their work uncommitted: the worktree's changed files count. A and B
+    create the same new files, B and C change the same four files, A and C are independent: A
+    and C merge first, B rebases once onto both. The sidebar gets the same order per branch."""
+    base = tempfile.mkdtemp()
+    try:
+        repo = os.path.join(base, "repo")
+        os.makedirs(repo)
+        g = lambda *a, cwd=repo: subprocess.run(["git", "-C", cwd, "-c", "user.name=t", "-c", "user.email=t@t", *a],
+                                                check=True, capture_output=True, text=True).stdout
+        g("init", "-q", "-b", "develop")
+        for f in ("w1", "w2", "w3", "w4", "solo", "c-only"):
+            open(os.path.join(repo, f), "w").write("x\n")
+        g("add", "-A")
+        g("commit", "-qm", "base")
+        wt = {}
+        for i, name in enumerate(("task-b", "task-a", "task-c", "task-d")):
+            wt[name] = os.path.join(base, name)
+            g("worktree", "add", "-q", "-b", name, wt[name])
+            # B's worktree is the newest; the rule must not lean on it to put B last.
+            os.utime(os.path.join(wt[name], ".git"), (1_700_000_000 + 100 * i,) * 2)
+        def write(name, path, text="y\n"):
+            full = os.path.join(wt[name], path)
+            os.makedirs(os.path.dirname(full), exist_ok=True)
+            open(full, "w").write(text)
+        shared = [f"src/ports/{p}.py" for p in ("orders", "ledger", "notify", "phase", "billing", "export")]
+        for p in shared:
+            write("task-a", p)
+            write("task-b", p)
+        for f in ("w1", "w2", "w3", "w4"):
+            write("task-b", f)
+            write("task-c", f)
+        write("task-c", "c-only")
+        # D committed its work and left one more file uncommitted: both count, and it overlaps no one.
+        write("task-d", "solo")
+        g("add", "-A", cwd=wt["task-d"])
+        g("commit", "-qm", "d", cwd=wt["task-d"])
+        write("task-d", "d-extra")
+        script = os.path.join(KIT, "scripts", "merge-order.py")
+        run = lambda *a: subprocess.run([sys.executable, script, "--base", "develop", *a], capture_output=True, text=True, cwd=repo)
+        p = run("--json")
+        assert p.returncode == 0, p.stderr
+        got = json.loads(p.stdout)
+        order = got["order"]
+        assert set(order) == {"task-a", "task-b", "task-c", "task-d"}, f"uncommitted work counts: {got}"
+        assert order.index("task-b") > order.index("task-a") and order.index("task-b") > order.index("task-c"), \
+            f"B overlaps both: it merges after A and C and rebases once: {order}"
+        kinds = {(e["first"], e["then"]): e["kind"] for e in got["edges"]}
+        assert kinds == {("task-a", "task-b"): "overlap", ("task-c", "task-b"): "overlap"}, kinds
+        assert "src/ports/orders.py" in next(e["detail"] for e in got["edges"] if e["first"] == "task-a"), got
+        assert got["pending"] == ["task-a", "task-b", "task-c"] and got["independent"] == ["task-d"], got
+        text = run().stdout
+        assert "task-b (not committed yet)" in text and "task-d (not committed yet)" not in text \
+            and "task-d  independent, any order" in text, text
+        # The sidebar's per-branch place, from the server, against the remote's default branch.
+        g("remote", "add", "origin", repo)
+        g("fetch", "-q", "origin")
+        g("symbolic-ref", "refs/remotes/origin/HEAD", "refs/remotes/origin/develop")
+        d = load_dashboard("dash_merge")
+        pos = d.merge_positions(repo)
+        assert pos["task-b"]["pos"] > max(pos["task-a"]["pos"], pos["task-c"]["pos"]) and pos["task-b"]["total"] == 4 \
+            and sorted(pos["task-b"]["after"]) == ["task-a", "task-c"] and pos["task-b"]["pending"] \
+            and pos["task-d"]["independent"] and not pos["task-d"]["pending"], pos
+    finally:
+        shutil.rmtree(base)
 
 
 def hook(root, payload, *args, env=None, script=None, raw=None):

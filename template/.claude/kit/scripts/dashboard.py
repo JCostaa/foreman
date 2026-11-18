@@ -1065,9 +1065,40 @@ def triage_task(wt, wdir, now):
             "findings_reason": None, "findings_review_newer": [], "current": False, "updated": updated, "stages": st}
 
 
+MERGE_TTL = 30
+_MERGE_CACHE = {}
+
+
+def merge_positions(root, now=None):
+    """{branch: {pos, total, after, pending, independent}} from merge-order.py, which counts each
+    worktree's uncommitted work too (running tasks keep theirs uncommitted); {} when the script
+    fails, so the sidebar shows nothing rather than a guessed order. Cached a few seconds."""
+    now = time.time() if now is None else now
+    ref = default_base(root)
+    hit = _MERGE_CACHE.get((root, ref))
+    if hit and 0 <= now - hit[0] < MERGE_TTL:
+        return hit[1]
+    try:
+        p = subprocess.run([sys.executable, os.path.join(KIT, "scripts", "merge-order.py"), "--base", ref, "--json"],
+                           capture_output=True, text=True, cwd=root, timeout=30)
+        got = json.loads(p.stdout) if p.returncode == 0 else None
+    except (OSError, subprocess.SubprocessError, ValueError):
+        got = None
+    out = {}
+    if isinstance(got, dict):
+        order = got.get("order") or []
+        for n, b in enumerate(order, 1):
+            out[b] = {"pos": n, "total": len(order), "pending": b in (got.get("pending") or []),
+                      "independent": b in (got.get("independent") or []),
+                      "after": [e["first"] for e in got.get("edges") or [] if e.get("then") == b]}
+    _MERGE_CACHE[(root, ref)] = (now, out)
+    return out
+
+
 def list_tasks(root, now=None):
     now = time.time() if now is None else now
     groups = []
+    merge = merge_positions(root, now)
     for i, (wt, branch) in enumerate(worktrees(root)):
         tasks = worktree_tasks(wt, branch, now, root=root)
         if not tasks:
@@ -1075,7 +1106,7 @@ def list_tasks(root, now=None):
         # The path lets the page write "cd <path> && claude '<prompt>'" for a step done in a session.
         groups.append({"wt": i, "name": os.path.basename(wt), "branch": branch, "path": wt,
                        "here": os.path.realpath(wt) == os.path.realpath(root), "tasks": tasks,
-                       "switches": switches_of(wt)})
+                       "switches": switches_of(wt), "merge": merge.get(branch)})
     return groups
 
 

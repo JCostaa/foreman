@@ -649,6 +649,13 @@ const I18N = /* i18n:begin */{
   "side.done": "Done ({n})",
   "side.items": "{n} item(s) need you",
   "side.part": "part {k}/{n}",
+  "merge.section": "Merge order",
+  "merge.summary": "{n} branch(es), {first} first",
+  "merge.pos": "merge {n} of {total}",
+  "merge.after": "after {list}, then rebase",
+  "merge.any": "independent, any order",
+  "merge.pending": "(not committed yet)",
+  "merge.title": "Merge order of the worktrees' branches, committed and uncommitted work (merge-order.py)",
   "side.wt-items": "needs you, no task row",
   "menu.title": "Settings: language, theme, sound and notifications",
   "status.triage": "Triage",
@@ -1057,6 +1064,13 @@ const I18N = /* i18n:begin */{
   "side.done": "Concluídas ({n})",
   "side.items": "{n} item(ns) precisam de você",
   "side.part": "parte {k}/{n}",
+  "merge.section": "Ordem de merge",
+  "merge.summary": "{n} branch(es), {first} primeiro",
+  "merge.pos": "merge {n} de {total}",
+  "merge.after": "depois de {list}, e então rebase",
+  "merge.any": "independente, qualquer ordem",
+  "merge.pending": "(sem commit ainda)",
+  "merge.title": "Ordem de merge das branches das worktrees, com trabalho commitado e não commitado (merge-order.py)",
   "side.wt-items": "precisa de você, sem linha de tarefa",
   "menu.title": "Ajustes: idioma, tema, som e notificações",
   "status.triage": "Triagem",
@@ -1376,8 +1390,20 @@ function renderSide(groups) {
   // Closed by default; kept as the dev left it across renders.
   if (dd) { if (dd.open !== sideDoneOpen) dd.open = sideDoneOpen; dd.ontoggle = () => { sideDoneOpen = dd.open } }
   document.querySelectorAll("#tasks .task").forEach(b => b.onclick = () => select(+b.dataset.wt, b.dataset.id));
+  // The merge order: one line closed by default, every worktree with its place inside.
+  const ms = groups.filter(g => g.merge && g.merge.pos).sort((a, b) => a.merge.pos - b.merge.pos);
+  const mbox = $("merge-box");
+  mbox.hidden = !ms.length;
+  if (ms.length) {
+    setHTML($("merge-sum"), `${t("merge.section")} <span class="meta">${t("merge.summary", { n: ms.length, first: ms[0].name })}</span>`);
+    setHTML($("merge"), `<ol class="merge-list">${ms.map(g => `<li data-merge-wt="${g.wt}"><b>${esc(g.name)}</b>${mergeHTML(g.merge)}</li>`).join("")}</ol>`);
+  }
   renderSidePop(groups);
 }
+// One worktree's place in the merge order, said in words (merge-order.py, uncommitted work included).
+const mergeHTML = (m) => m && m.pos ? `<div class="merge meta" data-merge="${m.pos}" title="${esc(t("merge.title"))}">${t("merge.pos", { n: m.pos, total: m.total })}` +
+  (m.after && m.after.length ? " · " + t("merge.after", { list: m.after.join(", ") }) : m.independent ? " · " + t("merge.any") : "") +
+  (m.pending ? " " + t("merge.pending") : "") + `</div>` : "";
 let sideDoneOpen = false;
 $("side-filter").addEventListener("input", (e) => { sideFilter = e.target.value; renderSide(lastGroups) });
 // "/" focuses the filter; up and down move between the rows, Enter opens one.
