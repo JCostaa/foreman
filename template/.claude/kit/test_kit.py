@@ -2,6 +2,7 @@
 """Proves the kit's checks bite: run with `python3 .claude/kit/test_kit.py`."""
 import json
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -263,6 +264,7 @@ def main():
     page_holds()
     turn_holds()
     page_visibility()
+    alert_text()
     language_hook()
     rooms_and_agents()
     switches()
@@ -2523,6 +2525,46 @@ def page_visibility():
         assert os.path.getmtime(page) > time.time() - 5, "the stream keeps them while a page was in view lately"
     finally:
         shutil.rmtree(root)
+
+
+def alert_text():
+    """The page gets a turn's whole last message (its last 8000 characters), masked by the
+    server with its own copy of the hooks' mask whatever the worktree's hook wrote; an alert of an
+    older hook without the message falls back to the session's transcript."""
+    d = load_dashboard("dash_alert_text")
+    root = os.path.realpath(kit_root())
+    config = tempfile.mkdtemp()
+    saved = os.environ.get("CLAUDE_CONFIG_DIR")
+    try:
+        sdir = os.path.join(root, ".work", "attention", "s-long")
+        os.makedirs(sdir)
+        long = "x" * 9000 + " PASSWORD=hunter2 card 4111 1111 1111 1111. Shall I go on?"
+        json.dump({"kind": "turn", "since": time.time(), "detail": "token=abc123", "message": long},
+                  open(os.path.join(sdir, "main.json"), "w"))
+        old = os.path.join(root, ".work", "attention", "s-old")
+        os.makedirs(old)
+        json.dump({"kind": "turn", "since": time.time(), "detail": "Done with the contract."},
+                  open(os.path.join(old, "main.json"), "w"))
+        key = re.sub(r"[^A-Za-z0-9]", "-", root)
+        os.makedirs(os.path.join(config, "projects", key))
+        with open(os.path.join(config, "projects", key, "s-old.jsonl"), "w") as f:
+            f.write(json.dumps({"type": "user", "message": {"content": "hi"}}) + "\n")
+            f.write(json.dumps({"type": "assistant", "message": {"content": [
+                {"type": "text", "text": "Done with the contract. Secret=s3cr3t. Which option, A or B?"}]}}) + "\n")
+        os.environ["CLAUDE_CONFIG_DIR"] = config
+        got = {a["session"]: a for a in d.list_attention(root)[0]["alerts"]}
+        msg = got["s-long"]["message"]
+        assert len(msg) <= 8000 and msg.endswith("Shall I go on?") and "hunter2" not in msg and "4111" not in msg, msg[-120:]
+        assert "abc123" not in got["s-long"]["detail"], "the detail is masked again by the server"
+        assert got["s-old"]["message"].endswith("Which option, A or B?") and "s3cr3t" not in got["s-old"]["message"], \
+            f"an older hook's alert reads the transcript's last text: {got['s-old']['message']}"
+    finally:
+        if saved is None:
+            os.environ.pop("CLAUDE_CONFIG_DIR", None)
+        else:
+            os.environ["CLAUDE_CONFIG_DIR"] = saved
+        shutil.rmtree(root)
+        shutil.rmtree(config)
 
 
 def page_holds():

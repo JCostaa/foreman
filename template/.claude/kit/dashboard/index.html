@@ -155,6 +155,7 @@
   .switch i::after { content:""; position:absolute; top:2px; left:2px; width:10px; height:10px; border-radius:50%; background:var(--mute); transition:left .2s }
   .switch.on i { background:rgba(61,220,151,.35) } .switch.on i::after { left:14px; background:var(--ok) } .switch.on b { color:var(--ok) }
 
+  .turn-msg { white-space:pre-wrap; overflow-wrap:anywhere; max-height:260px; overflow:auto; margin-top:6px; padding:6px 8px; background:var(--bg); border:1px solid var(--line); border-radius:3px; font-size:12px }
   .dismiss { float:right; border:0; background:none; color:var(--mute); font-size:16px; line-height:1; padding:0 4px } .dismiss:hover { color:var(--fg) }
   .dismissed { margin-top:8px } .dismissed > summary { font-size:12px } .dismissed .alert { opacity:.7; margin-top:6px }
 </style>
@@ -1173,6 +1174,8 @@ async function tick() {
     document.title = "(!) Foreman";
   }
   ticking = false;
+  // A turn's message is long and its ask is at the end: a card shows it scrolled to the end.
+  document.querySelectorAll("[data-turn-msg]:not([data-scrolled])").forEach(el => { el.scrollTop = el.scrollHeight; el.dataset.scrolled = "1" });
   if (again) { again = false; tick() }
 }
 
@@ -1258,7 +1261,8 @@ function alertBody(a, n) {
   if (a.kind === "permission")
     return `<div class="action">${t(a.held ? "perm.held" : "action.approve-in-terminal", { tool: a.tool || "" })}</div>${detail}` +
       (a.held ? `<div class="actions"><button class="primary" data-allow="${n}">${t("perm.allow")}</button><button class="danger" data-deny="${n}">${t("perm.deny")}</button><button data-release="${n}">${t("alert.release")}</button></div>` : "");
-  return `<div class="meta">${esc(a.detail).slice(0, 600)}</div>` + (a.held
+  // The whole last message, open and scrolled to its end, where the session puts its ask.
+  return `<div class="turn-msg" data-turn-msg>${esc(a.message || a.detail)}</div>` + (a.held
     ? `<textarea rows="3" data-msg="${n}" placeholder="${esc(t("turn.placeholder"))}" style="margin-top:6px"></textarea><div class="actions"><button class="primary" data-reply="${n}">${t("turn.send")}</button><button data-release="${n}">${t("alert.release")}</button></div>`
     : a.released ? goneHTML(a, n)
     : a.turns ? `<div class="action">${t("action.prompt-session", { wt: a.wtName })}</div>`
@@ -1327,7 +1331,7 @@ function showAttention() {
       new Notification(`${a.wtName}: ${t("kind." + a.kind)}`, { body: a.tool || "", tag: key(a) });
   });
   // Re-rendered only when the set changes, so a half-written answer survives the refresh.
-  const sig = JSON.stringify([lang, all.map(a => [key(a), a.held, a.released, a.qid, a.answers, a.turns]), hidden.length]);
+  const sig = JSON.stringify([lang, all.map(a => [key(a), a.held, a.released, a.qid, a.answers, a.turns, a.message]), hidden.length]);
   if (sig === attnSig) return;
   attnSig = sig;
   $("attn").innerHTML = all.map((a, n) => {

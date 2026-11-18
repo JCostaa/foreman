@@ -38,6 +38,7 @@ wrote its `closed` marker. Also run as:
 """
 import hashlib
 import hmac
+import importlib.util
 import http.server
 import json
 import os
@@ -57,6 +58,19 @@ import urllib.request
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import decisions  # noqa: E402  who acts on each finding; the session told of page decisions
+
+# The hooks' own masking and turn classifier, from the server's copy of the kit (never a
+# worktree's copy, whose hook may be older or edited).
+_FLOW_SPEC = importlib.util.spec_from_file_location(
+    "kit_flow_mask", os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "hooks", "flow.py"))
+_FLOW = importlib.util.module_from_spec(_FLOW_SPEC)
+_FLOW_SPEC.loader.exec_module(_FLOW)
+
+
+def mask_text(text):
+    """The hooks' mask on a file's text; None (a file that could not be read) stays None."""
+    return _FLOW.mask(text) if isinstance(text, str) else text
+
 
 KIT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 ID_RX = re.compile(r"[A-Za-z0-9._-]+")
@@ -1064,9 +1078,13 @@ def alerts(wdir, now):
             a = read_json(os.path.join(sdir, name))
             if not live(a, now):
                 continue
+            # Masked again with the server's own mask: the file was written by the worktree's
+            # hook, whose masking may be older or edited.
             item = {"session": session, "agent": agent, "kind": a["kind"], "since": a["since"],
-                    "detail": str(a.get("detail") or ""), "tool": a.get("tool"), "qid": a.get("qid"),
+                    "detail": _FLOW.mask(str(a.get("detail") or "")), "tool": a.get("tool"), "qid": a.get("qid"),
                     "held": held_now(a, now)}
+            if a["kind"] == "turn":
+                item["message"] = _FLOW.mask(str(a.get("message") or ""))[-TURN_MAX:]
             if a["kind"] == "question":
                 item.update(questions=a.get("questions") or [])
             if a["kind"] in ("question", "turn"):
@@ -1134,6 +1152,8 @@ def list_attention(root, now=None, visible=True):
         answers_on = os.path.exists(os.path.join(adir, "answers-on"))
         for a in found:
             a.update(alert_action(a, answers_on, wt))
+            if a["kind"] == "turn" and not a.get("message"):
+                a["message"] = transcript_tail(wt, a["session"], os.path.expanduser("~")) or a["detail"]
         q = shlex.quote
         memory = [{"id": tid, "action": "open-session", "command": f"cd {q(wt)} && claude {q('review the auto memory of ' + tid)}", "command_kind": "shell"}
                   for tid in pending]
@@ -1145,6 +1165,59 @@ def list_attention(root, now=None, visible=True):
                            "answers": answers_on, "turns": os.path.exists(os.path.join(adir, "turns-on")), "alerts": found,
                            "memory_requests": pending, "memory_actions": memory, "mr_check": check})
     return groups
+
+
+TURN_MAX = 8000
+_tail_cache = {}
+
+
+def transcript_tail(wt, session, home_dir):
+    """The last assistant text of a session, masked, from its transcript under
+    <config>/projects/<key of the worktree>/<session>.jsonl. Fallback for a "your turn" alert
+    written by an older hook, which kept only the first 200 characters: the ask ("ok?") is at
+    the end of the message, and the dev had to read it in the terminal."""
+    if not safe_id(session):
+        return ""
+    # Claude Code keys a project by the path it was started in, which may be the symlinked one
+    # (/tmp against /private/tmp): both spellings are tried.
+    keys = list(dict.fromkeys(re.sub(r"[^A-Za-z0-9]", "-", p) for p in (wt, os.path.realpath(wt))))
+    configs = [os.environ.get("CLAUDE_CONFIG_DIR") or ""]
+    try:
+        configs += [os.path.join(home_dir, n) for n in sorted(os.listdir(home_dir))
+                    if n == ".claude" or n.startswith(".claude-")]
+    except OSError:
+        pass
+    for config, key in ((c, k) for c in filter(None, configs) for k in keys):
+        path = os.path.join(config, "projects", key, session + ".jsonl")
+        try:
+            st = os.stat(path)
+        except OSError:
+            continue
+        hit = _tail_cache.get(path)
+        if hit and hit[0] == st.st_mtime:
+            return hit[1]
+        text = ""
+        try:
+            with open(path, "rb") as f:
+                f.seek(max(0, st.st_size - 1_000_000))
+                lines = f.read().decode("utf-8", "replace").splitlines()
+        except OSError:
+            lines = []
+        for line in reversed(lines):
+            try:
+                entry = json.loads(line)
+            except ValueError:
+                continue
+            msg = entry.get("message") if isinstance(entry, dict) and entry.get("type") == "assistant" else None
+            parts = msg.get("content") if isinstance(msg, dict) else None
+            texts = [p.get("text", "") for p in parts if isinstance(p, dict) and p.get("type") == "text"] \
+                if isinstance(parts, list) else []
+            if any(t.strip() for t in texts):
+                text = _FLOW.mask("\n".join(texts))[-TURN_MAX:]
+                break
+        _tail_cache[path] = (st.st_mtime, text)
+        return text
+    return ""
 
 
 def alert_action(alert, answers_on, wt):
