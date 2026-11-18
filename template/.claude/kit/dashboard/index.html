@@ -53,8 +53,23 @@
   .st { font-size:11px; border:1px solid var(--line); border-radius:3px; padding:0 7px; margin-left:auto; white-space:nowrap }
   .st.running, .st.fixing { color:var(--run); border-color:var(--run) } .st.done, .st.ready-for-mr, .st.ready-to-close { color:var(--ok); border-color:var(--ok) }
   .st.FAIL, .st.blocked { color:var(--bad); border-color:var(--bad) } .st.findings, .st.clarify, .st.mr-unchecked { color:var(--warn); border-color:var(--warn) }
-  /* waiting on you */
-  .waiting { margin-top:14px; background:linear-gradient(90deg, rgba(245,165,36,.08), transparent); border:1px solid rgba(245,165,36,.35); border-radius:4px; padding:4px 12px 12px }
+  /* needs you: one calm list grouped by what the dev must do; amber only for Answer and Approve */
+  .waiting { margin-top:14px; background:var(--card); border:1px solid var(--line); border-radius:6px; padding:4px 12px 12px }
+  .waiting h2 { color:var(--fg) } .ncount { color:var(--mute); text-transform:none; letter-spacing:0 }
+  .ngroup { margin-top:8px } .ngroup-h { font-size:11px; text-transform:uppercase; letter-spacing:.12em; color:var(--mute); margin:6px 0 4px; cursor:default }
+  details.ngroup > summary.ngroup-h { cursor:pointer } .ngroup-h .n { color:var(--fg) }
+  .nlist { display:grid; gap:6px }
+  .nrow { background:var(--card2); border:1px solid var(--line); border-left:3px solid var(--line); border-radius:4px; padding:6px 10px; overflow-wrap:anywhere }
+  .ngroup[data-group="answer"] .nrow, .ngroup[data-group="approve"] .nrow { border-left-color:var(--warn) }
+  .ngroup[data-group="idle"] .nrow, .ngroup[data-group="progress"] .nrow { opacity:.8 }
+  .nrow.mine { box-shadow:inset 0 0 0 1px var(--accent) }
+  .nrow-h { display:flex; gap:8px; align-items:center } .nmain { flex:1; min-width:0 } .nwho { font-size:12px; color:var(--mute) } .nwho b { color:var(--fg) }
+  .nsay { white-space:nowrap; overflow:hidden; text-overflow:ellipsis }
+  .nside { display:flex; gap:6px; align-items:center; flex-wrap:wrap; justify-content:flex-end }
+  .nbadge { font-size:10px; border:1px solid var(--line); border-radius:3px; padding:0 5px; color:var(--mute) } .nbadge.held { color:var(--ok); border-color:var(--ok) }
+  .nago { font-size:11px; color:var(--mute) }
+  .ndot { width:7px; height:7px; border-radius:50%; background:var(--run); flex:none }
+  .nrow-b { margin-top:6px; border-top:1px dashed var(--line); padding-top:6px }
   .cards { display:grid; gap:8px }
   .alert { background:var(--card); border:1px solid var(--line); border-left:4px solid var(--warn); border-radius:4px; padding:10px 12px; overflow-wrap:anywhere }
   .alert.question { border-left-color:var(--run) } .alert.permission, .alert.FAIL { border-left-color:var(--bad) } .alert.done, .alert.ready-for-mr { border-left-color:var(--ok) }
@@ -174,9 +189,16 @@
   <button id="theme-btn" type="button"></button>
 </div></header>
 <section class="waiting" id="waiting" hidden>
-<h2 id="waiting-title" data-i18n="waiting.title">Waiting on you</h2>
-<div class="cards" id="attn"></div>
-<div class="cards" id="todo" style="margin-top:8px"></div>
+<h2><span data-i18n="needs.title">Needs you</span> <span class="ncount" id="needs-count" aria-live="polite"></span></h2>
+<div id="needs">
+<div class="ngroup" data-group="answer" hidden><div class="ngroup-h"><span data-i18n="needs.g.answer">Answer</span> <span class="n"></span></div><div class="nlist"></div></div>
+<div class="ngroup" data-group="approve" hidden><div class="ngroup-h"><span data-i18n="needs.g.approve">Approve</span> <span class="n"></span></div><div class="nlist"></div></div>
+<div class="ngroup" data-group="decide" hidden><div class="ngroup-h"><span data-i18n="needs.g.decide">Decide</span> <span class="n"></span></div><div class="nlist"></div></div>
+<div class="ngroup" data-group="ship" hidden><div class="ngroup-h"><span data-i18n="needs.g.ship">Ship</span> <span class="n"></span></div><div class="nlist"></div></div>
+<div class="ngroup" data-group="idle" hidden><div class="ngroup-h"><span data-i18n="needs.g.idle">Idle sessions</span> <span class="n"></span></div><div class="nlist"></div></div>
+<details class="ngroup" data-group="progress" hidden><summary class="ngroup-h"><span data-i18n="needs.g.progress">Progress</span> <span class="n"></span></summary><div class="nlist"></div></details>
+</div>
+<div id="dismissed-box"></div>
 </section>
 <div class="meta" id="legend" style="margin-top:10px"></div>
 <h1 id="title">Foreman</h1>
@@ -568,7 +590,28 @@ const I18N = /* i18n:begin */{
   "gone.what.turn": "What to do: write your message here, press \"Copy\" and paste it in the terminal of session {session}.",
   "gone.answer": "Text to paste",
   "gone.picks": "Choose these in the terminal: {picks}",
-  "gone.picks.none": "Pick the options above: what to choose in the terminal shows here."
+  "gone.picks.none": "Pick the options above: what to choose in the terminal shows here.",
+  "needs.title": "Needs you",
+  "needs.g.answer": "Answer",
+  "needs.g.approve": "Approve",
+  "needs.g.decide": "Decide",
+  "needs.g.ship": "Ship",
+  "needs.g.idle": "Idle sessions",
+  "needs.g.progress": "Progress",
+  "needs.count": "{n} waiting",
+  "needs.details": "Details",
+  "needs.new": "new since you looked",
+  "needs.held": "held for the page",
+  "needs.terminal": "answer in its terminal",
+  "needs.answer": "Answer",
+  "needs.approve": "Approve",
+  "needs.say.permission": "wants to run {tool}",
+  "needs.idle.for": "idle for {n} min",
+  "needs.findings": "{n} finding(s) to decide",
+  "needs.findings.go": "Decide in Steps",
+  "needs.waiting-decision": "the session is waiting for this decision",
+  "needs.open": "Open",
+  "needs.mine": "{n} item(s) of this worktree wait under Needs you."
  },
  "pt": {
   "lang.button": "PT / EN",
@@ -941,7 +984,28 @@ const I18N = /* i18n:begin */{
   "gone.what.turn": "O que fazer: escreva a mensagem aqui, aperte \"Copiar\" e cole no terminal da sessão {session}.",
   "gone.answer": "Texto para colar",
   "gone.picks": "Escolha estas no terminal: {picks}",
-  "gone.picks.none": "Escolha as opções acima: o que escolher no terminal aparece aqui."
+  "gone.picks.none": "Escolha as opções acima: o que escolher no terminal aparece aqui.",
+  "needs.title": "Precisa de você",
+  "needs.g.answer": "Responder",
+  "needs.g.approve": "Aprovar",
+  "needs.g.decide": "Decidir",
+  "needs.g.ship": "Entregar",
+  "needs.g.idle": "Sessões paradas",
+  "needs.g.progress": "Andamento",
+  "needs.count": "{n} esperando",
+  "needs.details": "Detalhes",
+  "needs.new": "novo desde que você olhou",
+  "needs.held": "retida para a página",
+  "needs.terminal": "responda no terminal",
+  "needs.answer": "Responder",
+  "needs.approve": "Aprovar",
+  "needs.say.permission": "quer rodar {tool}",
+  "needs.idle.for": "parada há {n} min",
+  "needs.findings": "{n} achado(s) para decidir",
+  "needs.findings.go": "Decidir em Etapas",
+  "needs.waiting-decision": "a sessão espera esta decisão",
+  "needs.open": "Abrir",
+  "needs.mine": "{n} item(ns) deste worktree esperam em Precisa de você."
  }
 }/* i18n:end */;
 // Statuses dashboard.py returns by name; any other status is the agent of the last stage written.
@@ -1190,9 +1254,8 @@ async function render() {
   // A worktree with alerts and no task still gets a row: the triage session is the one that waits most.
   attention.forEach(a => { if (!groups.some(g => g.wt === a.wt)) groups.push({ wt: a.wt, name: a.name, branch: a.branch, here: a.here, tasks: [] }) });
   groups.sort((a, b) => a.wt - b.wt);
-  showAttention();
-  showTodo(groups);
-  const pending = (wt) => { const g = attention.find(a => a.wt === wt); return g ? g.alerts.length + (g.memory_actions || g.memory_requests || []).length + (g.mr_check ? 1 : 0) : 0 };
+  showNeeds(groups);
+  const pending = (wt) => needItems.filter(i => i.wt === wt && NEED_GROUPS.includes(i.group)).length;
   sel = readHash() || sel;
   if (!sel || !groups.some(g => g.wt === sel.wt && g.tasks.some(k => k.id === sel.id))) {
     const all = groups.flatMap(g => g.tasks.map(k => ({ ...k, wt: g.wt, here: g.here })));
@@ -1211,37 +1274,6 @@ async function render() {
 function select(wt, id) {
   sel = { wt, id }; openFile = null; openBot = null;
   history.replaceState(null, "", "#" + wt + "/" + encodeURIComponent(id)); tick();
-}
-
-// What waits on the dev besides the alerts: memory requests, failed PR/MR checks, tasks whose
-// next move is the dev's, done tasks to clean. Each ends with its action and a whole command.
-function showTodo(groups) {
-  const items = [], done = [];
-  attention.forEach(g => {
-    (g.memory_actions || []).forEach(m => items.push(`<div class="alert"><b>${esc(g.name)}</b> · ${esc(m.id)}<div class="action">${t("action.open-session", { wt: g.name, path: g.path || g.name, id: m.id })}</div>${cmdBlock(m.command)}</div>`));
-    if (g.mr_check)
-      items.push(`<div class="alert mr-unchecked"><div class="head"><b>${esc(g.name)}</b>${statusBadge("mr-unchecked")}</div><div class="action">${t("action.fix-mr-check", { wt: g.name, error: g.mr_check.error, ids: (g.mr_check.tasks || []).join(", ") })}</div>${cmdBlock(g.mr_check.command)}</div>`);
-  });
-  const checked = new Set(attention.filter(g => g.mr_check).map(g => g.wt));
-  groups.forEach(g => g.tasks.forEach(k => {
-    if (sel && g.wt === sel.wt && k.id === sel.id) return;
-    const s = shown(k);
-    if (s === "mr-unchecked" && checked.has(g.wt)) return;
-    if (["findings", "FAIL", "ready-for-mr", "mr-unchecked", "ready-to-close"].includes(s) && k.next_step !== "fix-loop") {
-      const next = k.next_step && has("next." + k.next_step) ? t("next." + k.next_step, { id: k.id, wt: g.name, error: (k.mr && k.mr.error) || "" }) : esc(k.next_step || "");
-      items.push(`<div class="alert ${esc(s)}"><div class="head"><b>${esc(g.name)}</b> · ${esc(k.id)}${statusBadge(s)}</div><div class="action">${next}</div>${cmdBlock(k.command)}<div class="actions"><button data-go="${g.wt}" data-id="${esc(k.id)}">${t("todo.open")}</button></div></div>`);
-    }
-    if (k.status === "done") done.push(`${g.name}/${k.id}`);
-  }));
-  if (done.length)
-    items.push(`<div class="alert done">${t("todo.clean", { n: done.length, ids: done.join(", ") })}<div class="actions"><button id="clean-all" class="danger">${t("clean.all")}</button></div></div>`);
-  setHTML($("todo"), items.join(""));
-  $("todo").querySelectorAll("[data-go]").forEach(b => b.onclick = () => select(+b.dataset.go, b.dataset.id));
-  if ($("clean-all")) $("clean-all").onclick = () => openCleanup("all=done", true);
-  const waiting = attention.some(g => g.alerts.some(a => !(sel && g.wt === sel.wt))) || items.length;
-  $("waiting-title").innerHTML = t(sel ? "waiting.elsewhere" : "waiting.title");
-  $("waiting").hidden = !waiting;
-  setHTML($("legend"), (waiting ? "" : t("waiting.none") + " ") + `<details><summary>${t("legend.more")}</summary>${t("legend.text")}</details>`);
 }
 
 // An alert answered where it shows: a question, a permission or a session's turn, while the hook
@@ -1315,15 +1347,130 @@ const akey = (a) => [a.wt, a.session, a.agent, a.kind, a.since].join("/");
 let dismissed = new Set();
 try { dismissed = new Set(JSON.parse(localStorage.getItem(DISMISS_KEY) || "[]")) } catch (e) {}
 function saveDismissed() { try { localStorage.setItem(DISMISS_KEY, JSON.stringify([...dismissed].slice(-300))) } catch (e) {} }
-function showAttention() {
-  const every = attention.flatMap(g => g.alerts.map(a => ({ ...a, wt: g.wt, wtName: g.name, answers: g.answers, turns: g.turns, path: g.path })));
-  // Only what waits on the dev counts and beeps: a turn that only informs, or one idle by time
-  // alone, is shown but stays quiet (dashboard.py awaits / idle).
-  const loud = (a) => a.awaits !== false && !a.idle;
-  const counted = every.filter(loud);
-  document.title = (counted.length ? `(${counted.length}) ` : "") + "Foreman";
-  const all = every.filter(a => !(lastTask && sel && a.wt === sel.wt) && !dismissed.has(akey(a)));
-  const hidden = every.filter(a => dismissed.has(akey(a)));
+const NEED_GROUPS = ["answer", "approve", "decide", "ship"];
+const loud = (a) => a.awaits !== false && !a.idle;
+const taskOf = (wt) => { const g = lastGroups.find(x => x.wt === wt); const k = g && (g.tasks.find(x => x.current) || g.tasks[0]); return k ? k.id : "" };
+function alertSay(a) {
+  if (a.kind === "question") return esc((a.questions && a.questions[0] && a.questions[0].question) || a.detail || "");
+  if (a.kind === "permission") return t("needs.say.permission", { tool: a.tool || "" });
+  const text = String(a.message || a.detail || "").replace(/\s+/g, " ").trim();
+  return esc(text.length > 160 ? "…" + text.slice(-157) : text);
+}
+const idleFor = (since) => t("needs.idle.for", { n: Math.max(2, Math.round((Date.now() / 1000 - since) / 60)) });
+// One place for the findings decision: while a worktree's task is in findings, only the decision
+// itself folds into that task's Decide row: a held question of the main session whose every
+// question text starts with exactly "Findings <ID>:" (a header is capped at 12 characters, too
+// short for an ID), or a held turn of the main session whose whole message is the task skill's
+// announcement. Any other ask of that worktree keeps its own row and is never posted to.
+const ANNOUNCE = (id) => `Decide the findings of ${id} in the dashboard's Steps (or answer here).`;
+function findingsAsk(a, id) {
+  if (!a || !a.held || a.agent !== "main" || !id) return false;
+  if (a.kind === "question") return !!(a.questions && a.questions.length) && a.questions.every(qq => qq && typeof qq.question === "string" && qq.question.startsWith("Findings " + id + ":"));
+  if (a.kind === "turn") return String(a.message || "").trim() === ANNOUNCE(id);
+  return false;
+}
+const findingsWts = (groups) => new Map(groups.map(g => [g.wt, g.tasks.filter(k => k.status === "findings").map(k => k.id)]).filter(x => x[1].length));
+let rowAlerts = [], needItems = [];
+function buildNeeds(groups) {
+  const fw = findingsWts(groups), items = [], waitsOn = new Set();
+  rowAlerts = [];
+  attention.forEach(g => g.alerts.forEach(a0 => {
+    const a = { ...a0, wt: g.wt, wtName: g.name, answers: g.answers, turns: g.turns, path: g.path };
+    const id = (fw.get(g.wt) || []).find(x => findingsAsk(a, x));
+    if (id) { waitsOn.add(g.wt + "/" + id); return }
+    if (dismissed.has(akey(a))) return;
+    const n = rowAlerts.push(a) - 1;
+    const group = a.awaits === false ? "progress" : a.idle ? "idle" : a.kind === "permission" ? "approve" : "answer";
+    const say = group === "idle" ? `${idleFor(a.since)} · ${alertSay(a)}` : alertSay(a);
+    const quiet = group === "idle" || group === "progress";
+    items.push({ group, key: akey(a), wt: g.wt, name: g.name, task: taskOf(g.wt), say, since: a.since, kind: a.kind, alert: a, x: true,
+      badge: a.held ? `<span class="nbadge held">${t("needs.held")}</span>` : quiet ? "" : `<span class="nbadge">${t("needs.terminal")}</span>`,
+      primary: quiet ? "" : `<button type="button" class="primary" data-row-open>${t(a.kind === "permission" ? "needs.approve" : "needs.answer")}</button>`,
+      card: `<div class="meta">${t("kind." + a.kind + ".m")} · ${a.agent === "main" ? t("alert.main") : t("alert.agent", { id: a.agent.slice(0, 12) })}</div>${alertBody(a, n)}` });
+  }));
+  attention.forEach(g => {
+    (g.memory_actions || []).forEach(m => items.push({ group: "decide", key: `mem/${g.wt}/${m.id}`, wt: g.wt, name: g.name, task: m.id,
+      say: t("action.open-session", { wt: g.name, id: m.id }), card: cmdBlock(m.command) }));
+    if (g.mr_check) items.push({ group: "ship", key: `mr/${g.wt}`, wt: g.wt, name: g.name, task: (g.mr_check.tasks || []).join(", "),
+      say: t("action.fix-mr-check", { wt: g.name, error: g.mr_check.error, ids: (g.mr_check.tasks || []).join(", ") }), card: cmdBlock(g.mr_check.command) });
+  });
+  const checked = new Set(attention.filter(g => g.mr_check).map(g => g.wt)), done = [];
+  groups.forEach(g => g.tasks.forEach(k => {
+    const s = shown(k);
+    const next = k.next_step && has("next." + k.next_step) ? t("next." + k.next_step, { id: k.id, wt: g.name, error: (k.mr && k.mr.error) || "" }) : esc(k.next_step || "");
+    const open = `<button type="button" data-go="${g.wt}" data-id="${esc(k.id)}">${t("needs.open")}</button>`;
+    const decideN = (k.findings || []).filter(x => x.view === "needs-you" && x.state === "open").length;
+    if (s === "findings" || (k.status === "FAIL" && decideN)) {
+      items.push({ group: "decide", key: `find/${g.wt}/${k.id}`, wt: g.wt, name: g.name, task: k.id,
+        say: t("needs.findings", { n: decideN || k.findings_open || 0 }) + (waitsOn.has(g.wt + "/" + k.id) ? " · " + t("needs.waiting-decision") : ""),
+        primary: `<button type="button" class="primary" data-decide="${g.wt}" data-id="${esc(k.id)}">${t("needs.findings.go")}</button>`, card: `<div class="action">${next}</div>` });
+    } else if (s === "FAIL" && k.next_step === "fix-fail") {
+      items.push({ group: "decide", key: `fail/${g.wt}/${k.id}`, wt: g.wt, name: g.name, task: k.id, say: next, primary: open,
+        card: cmdBlock(sessionCmd(g.path || ".", "prompt.fail", k.id)) });
+    } else if (["ready-for-mr", "ready-to-close"].includes(s) || (s === "mr-unchecked" && !checked.has(g.wt))) {
+      items.push({ group: "ship", key: `ship/${g.wt}/${k.id}`, wt: g.wt, name: g.name, task: k.id, say: next, primary: open, card: cmdBlock(k.command) });
+    }
+    if (k.status === "done" && k.cleanable !== false) done.push([g, k.id]);
+  }));
+  // The cleanup of done tasks: one row per worktree, so it counts on that worktree like any item.
+  [...new Set(done.map(x => x[0]))].forEach(g => {
+    const ids = done.filter(x => x[0] === g).map(x => x[1]);
+    items.push({ group: "ship", key: `clean/${g.wt}`, wt: g.wt, name: g.name, task: ids.join(", "), say: t("todo.clean", { n: ids.length, ids: ids.join(", ") }),
+      primary: `<button type="button" class="danger" data-clean-all>${t("clean.all")}</button>` });
+  });
+  return items;
+}
+// One row of the list: who and what on the left; the badge, the time and the primary action on
+// the right; the full card behind Details. A row not looked at yet carries a dot.
+function needRowHTML(i) {
+  const x = i.x ? `<button type="button" class="dismiss" data-dismiss="${esc(i.key)}" title="${esc(t("dismiss"))}" aria-label="${esc(t("dismiss"))}">×</button>` : "";
+  return `<div class="nrow ${esc(i.kind || "")}${sel && i.wt === sel.wt ? " mine" : ""}" data-row="${esc(i.key)}" data-group="${i.group}" data-wt="${i.wt == null ? "" : i.wt}" tabindex="-1">` +
+    `<div class="nrow-h"><span class="ndot" data-new hidden title="${esc(t("needs.new"))}"></span>` +
+    `<div class="nmain"><div class="nwho"><b>${esc(i.name || "")}</b>${i.task ? " · " + esc(i.task) : ""}</div><div class="nsay">${i.say}</div></div>` +
+    `<div class="nside">${i.badge || ""}${i.since ? `<span class="nago" data-since="${esc(i.since)}"></span>` : ""}${i.primary || ""}` +
+    (i.card ? `<button type="button" class="nmore" data-row-toggle aria-expanded="false">${t("needs.details")}</button>` : "") + `${x}</div></div>` +
+    (i.card ? `<div class="nrow-b" hidden>${i.card}</div>` : "") + `</div>`;
+}
+// Keyed patch: a row whose markup did not change is kept as it is, so a half-written answer or an
+// open Details survives the refresh; parsed in a <template>, which never runs a handler.
+function patchRows(list, rows) {
+  const old = new Map([...list.children].map(el => [el.dataset.row, el]));
+  let prev = null;
+  rows.forEach(r => {
+    let el = old.get(r.key);
+    if (!el || el.dataset.html !== r.html) {
+      const tpl = document.createElement("template");
+      tpl.innerHTML = r.html;
+      const fresh = tpl.content.firstElementChild;
+      fresh.dataset.html = r.html;
+      if (el) { const b = el.querySelector(".nrow-b"); if (b && !b.hidden) { const fb = fresh.querySelector(".nrow-b"); if (fb) { fb.hidden = false; fresh.querySelector("[data-row-toggle]").setAttribute("aria-expanded", "true") } } el.replaceWith(fresh) }
+      el = fresh;
+    }
+    old.delete(r.key);
+    const want = prev ? prev.nextElementSibling : list.firstElementChild;
+    if (want !== el) list.insertBefore(el, want);
+    prev = el;
+  });
+  old.forEach(el => el.remove());
+}
+const SEEN_KEY = "agent-flow-seen";
+let seenRows = null;
+function seenSet() {
+  if (seenRows) return seenRows;
+  try { seenRows = new Set(JSON.parse(sessionStorage.getItem(SEEN_KEY) || "[]")) } catch (e) { seenRows = new Set() }
+  return seenRows;
+}
+function markSeen(row) {
+  const s = seenSet();
+  if (!row || s.has(row.dataset.row)) return;
+  s.add(row.dataset.row);
+  try { sessionStorage.setItem(SEEN_KEY, JSON.stringify([...s].slice(-500))) } catch (e) {}
+  const dot = row.querySelector("[data-new]");
+  if (dot) dot.hidden = true;
+}
+let needCount = 0;
+function showNeeds(groups) {
+  const every = attention.flatMap(g => g.alerts.map(a => ({ ...a, wt: g.wt, wtName: g.name })));
   const key = (a) => [a.wt, a.session, a.agent, a.kind, a.since].join("/");
   if (seenAlerts === null) seenAlerts = new Set(every.map(key));
   else every.forEach(a => {
@@ -1334,19 +1481,55 @@ function showAttention() {
       // Kind and tool only: the OS keeps notifications, and the detail may carry a command line.
       new Notification(`${a.wtName}: ${t("kind." + a.kind)}`, { body: a.tool || "", tag: key(a) });
   });
-  // Re-rendered only when the set changes, so a half-written answer survives the refresh.
-  const sig = JSON.stringify([lang, all.map(a => [key(a), a.held, a.released, a.qid, a.answers, a.turns, a.message]), hidden.length]);
-  if (sig === attnSig) return;
-  attnSig = sig;
-  $("attn").innerHTML = all.map((a, n) => {
-    const who = a.agent === "main" ? t("alert.main") : t("alert.agent", { id: a.agent.slice(0, 12) });
-    return `<div class="alert ${esc(a.kind)}" data-n="${n}"><div class="head">${HAND(16)} <button type="button" class="dismiss" data-dismiss="${esc(akey(a))}" title="${esc(t("dismiss"))}">×</button><b>${esc(a.wtName)}</b> · <span>${t("kind." + a.kind)}</span> · ${who} · <span class="meta">${t("alert.since", { time: new Date(a.since * 1000).toLocaleTimeString(lang === "pt" ? "pt-BR" : "en") })}</span></div><div class="meta">${t("kind." + a.kind + ".m")}</div>${alertBody(a, n)}</div>`;
-  }).join("");
-  if (hidden.length) $("attn").insertAdjacentHTML("beforeend", `<details class="dismissed"><summary>${t("dismissed.count", { n: hidden.length })}</summary>${hidden.map(a => `<div class="alert ${esc(a.kind)}"><b>${esc(a.wtName)}</b> · ${t("kind." + a.kind)} <button type="button" data-restore="${esc(akey(a))}">${t("dismiss.restore")}</button></div>`).join("")}</details>`);
-  $("attn").querySelectorAll("[data-dismiss]").forEach(b => b.onclick = () => { dismissed.add(b.dataset.dismiss); saveDismissed(); attnSig = ""; tick() });
-  $("attn").querySelectorAll("[data-restore]").forEach(b => b.onclick = () => { dismissed.delete(b.dataset.restore); saveDismissed(); attnSig = ""; tick() });
-  wireAlerts($("attn"), all);
+  needItems = buildNeeds(groups);
+  const wrap = $("needs");
+  [...NEED_GROUPS, "idle", "progress"].forEach(g => {
+    const xs = needItems.filter(i => i.group === g), sec = wrap.querySelector(`[data-group="${g}"]`);
+    sec.hidden = !xs.length;
+    sec.querySelector(".ngroup-h .n").textContent = xs.length || "";
+    patchRows(sec.querySelector(".nlist"), xs.map(i => ({ key: i.key, html: needRowHTML(i) })));
+  });
+  // The title, the list's count (a polite live region) and the sidebar badges count the same items.
+  needCount = needItems.filter(i => NEED_GROUPS.includes(i.group)).length;
+  $("needs-count").textContent = needCount ? t("needs.count", { n: needCount }) : "";
+  document.title = (needCount ? `(${needCount}) ` : "") + "Foreman";
+  const s = seenSet();
+  wrap.querySelectorAll("[data-row]").forEach(r => { const d = r.querySelector("[data-new]"); if (d) d.hidden = s.has(r.dataset.row) });
+  wrap.querySelectorAll(".nago[data-since]").forEach(n => { n.textContent = ago(+n.dataset.since) });
+  const hidden = attention.flatMap(g => g.alerts.map(a => ({ ...a, wt: g.wt, wtName: g.name }))).filter(a => dismissed.has(akey(a)));
+  setHTML($("dismissed-box"), hidden.length ? `<details class="dismissed"><summary>${t("dismissed.count", { n: hidden.length })}</summary>${hidden.map(a => `<div class="nrow"><b>${esc(a.wtName)}</b> · ${t("kind." + a.kind)} <button type="button" data-restore="${esc(akey(a))}">${t("dismiss.restore")}</button></div>`).join("")}</details>` : "");
+  $("waiting").hidden = !needItems.length && !hidden.length;
+  setHTML($("legend"), (needItems.length ? "" : t("waiting.none") + " ") + `<details><summary>${t("legend.more")}</summary>${t("legend.text")}</details>`);
+  wireAlerts(wrap, rowAlerts);
 }
+// A look at a row (pointer, focus, click) marks it seen; its buttons open, decide, go or dismiss.
+["mouseover", "focusin", "click"].forEach(evn => $("waiting").addEventListener(evn, (e) => {
+  markSeen(e.target.closest && e.target.closest("[data-row]"));
+  if (evn !== "click") return;
+  const b = e.target.closest && e.target.closest("button");
+  if (!b) return;
+  const row = b.closest("[data-row]");
+  if ("rowToggle" in b.dataset || "rowOpen" in b.dataset) {
+    const body = row.querySelector(".nrow-b"), tg = row.querySelector("[data-row-toggle]");
+    if (!body) return;
+    const open = "rowOpen" in b.dataset ? true : body.hidden;
+    body.hidden = !open;
+    tg.setAttribute("aria-expanded", String(open));
+    if (open) { const f = body.querySelector("textarea, input:not([disabled]), button"); if (f && "rowOpen" in b.dataset) f.focus() }
+  } else if ("decide" in b.dataset) decideIn(+b.dataset.decide, b.dataset.id);
+  else if ("go" in b.dataset) select(+b.dataset.go, b.dataset.id);
+  else if ("cleanAll" in b.dataset) openCleanup("all=done", true);
+  else if ("dismiss" in b.dataset) { dismissed.add(b.dataset.dismiss); saveDismissed(); tick() }
+  else if ("restore" in b.dataset) { dismissed.delete(b.dataset.restore); saveDismissed(); tick() }
+}));
+// "Decide in Steps": the task's steps view, at its first finding that waits on the dev.
+function decideIn(wt, id) {
+  setTab("tree");
+  if (!(sel && sel.wt === wt && sel.id === id)) select(wt, id);
+  pendingScroll = true;
+  tick();
+}
+let pendingScroll = false;
 function wireAlerts(box, all) {
   const send = async (a, extra, el) => {
     const r = await post("api/answer", { wt: a.wt, session: a.session, agent: a.agent, qid: a.qid, ...extra });
@@ -1428,13 +1611,14 @@ const lanesOf = (d) => { const out = {}; d.agents.forEach(l => { const k = l.typ
 const DEV_STEPS = ["fix-fail", "open-mr", "fix-mr-check", "mark-done", "clean-up", "clarify", "unblock"];
 
 // "Now": one line for the dev, NEEDS YOU or WAIT, and right under it the thing to do or who works.
+// Every alert and finding has one place: the needs-you list (this worktree's rows are marked) and
+// the steps view; Now says how many wait and leads there.
 function showNow(d, list, now) {
-  const g = attention.find(x => x.name === d.worktree);
-  const alerts = g ? g.alerts.map(a => ({ ...a, wt: g.wt, wtName: g.name, answers: g.answers, turns: g.turns, path: g.path })) : [];
+  const mine = needItems.filter(i => i.wt === sel.wt && NEED_GROUPS.includes(i.group));
   const open = (d.findings || []).filter(x => x.view === "needs-you" && x.state === "open");
   const items = [];
-  alerts.forEach((a, n) => items.push(`<div class="alert ${esc(a.kind)}" data-n="${n}"><div class="head">${HAND(16)} <b>${t("kind." + a.kind)}</b> · ${a.agent === "main" ? t("alert.main") : esc(roleName((d.agents.find(l => l.agent === a.agent) || {}).type || "")) || t("alert.agent", { id: a.agent.slice(0, 12) })}</div>${alertBody(a, n)}</div>`));
-  if (open.length) items.push(`<div class="alert findings"><div class="head"><b>${t("now.findings", { n: open.length })}</b></div>${open.map(findingRow).join("")}</div>`);
+  if (mine.length) items.push(`<div class="action">${t("needs.mine", { n: mine.length })}</div>`);
+  if (open.length) items.push(`<div class="alert findings"><div class="head"><b>${t("now.findings", { n: open.length })}</b></div><div class="actions"><button type="button" class="primary" data-decide="${sel.wt}" data-id="${esc(d.id)}">${t("needs.findings.go")}</button></div></div>`);
   const s = shown(d);
   if (DEV_STEPS.includes(d.next_step) && !(d.next_step === "fix-fail" && !open.length && (d.findings || []).some(x => x.view === "agent"))) {
     const buttons = [];
@@ -1461,8 +1645,7 @@ function showNow(d, list, now) {
   if (d.warning) extra.push(`<span class="bad">${has("warning." + d.warning) ? t("warning." + d.warning) : esc(d.warning)}</span>`);
   if (d.closed_by === "work.sh") extra.push(`<span class="meta">${t("closed.work.sh")}</span>`);
   setHTML($("now"), `<div class="now ${act ? "act" : "wait"}"><div class="verb">${t(act ? "now.act" : "now.wait")}</div><div class="nowbody"><div class="nowhead">${statusBadge(s)} <span class="meta">${statusMeaning(s)}</span></div>${body}${extra.length ? `<div class="extra">${extra.join(" · ")}</div>` : ""}${switchesLine(sel.wt)}</div></div>`);
-  wireAlerts($("now"), alerts);
-  wireFindings($("now"), d);
+  $("now").querySelectorAll("[data-decide]").forEach(b => b.onclick = () => decideIn(+b.dataset.decide, b.dataset.id));
   if ($("clean-one")) $("clean-one").onclick = () => openCleanup(`wt=${sel.wt}&id=${encodeURIComponent(d.id)}`, false);
   if ($("close-one")) $("close-one").onclick = () => openClose(d, sel.wt);
 }
@@ -1547,6 +1730,11 @@ function showTree(d, list, now) {
     showTree(d, list, now);
   });
   wireFindings($("tree"), d);
+  if (pendingScroll) {
+    pendingScroll = false;
+    const f = $("tree").querySelector(".finding.needs-you");
+    if (f) { f.scrollIntoView({ block: "center" }); f.setAttribute("tabindex", "-1"); f.focus({ preventScroll: true }) }
+  }
 }
 
 // The office: a floor plan in the spirit of a virtual office. One room per stage (flow.json

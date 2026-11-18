@@ -138,7 +138,7 @@ def answers_from_the_page(page):
     assert 'post("api/answer", { wt: a.wt, session: a.session, agent: a.agent, qid: a.qid, ...extra })' in code
     for part in ('{ behavior: "allow" }', '{ behavior: "deny" }', "{ message: text }", "{ release: true }", "{ answers }"):
         assert part in code, f"the page must send {part}"
-    body = code[code.index("function alertBody"):code.index("function showAttention")]
+    body = code[code.index("function alertBody"):code.index("const goneAlerts")]
     assert '(a.held ? `<div class="actions"><button class="primary" data-allow=' in body, "allow and deny only on a held permission"
     assert '? `<textarea rows="3" data-msg=' in body, "the message box only on a held turn"
     assert "ui turns on" in body and "ui answers on" in body, "a switched-off answer shows the whole command to turn it on"
@@ -175,19 +175,49 @@ def findings_panel(page):
     w = code[code.index("function wireFindings"):code.index("let tab = ")]
     assert w.index('$("decide-go").onclick') < w.index('post("api/findings-decision"') and w.count('post("api/findings-decision"') == 1, \
         "a finding is decided only from the confirmation"
-    assert "dismissed.delete(b.dataset.restore)" in code and "!dismissed.has(akey(a))" in code, "a dismissed alert hides and comes back"
+    assert "dismissed.delete(b.dataset.restore)" in code and "if (dismissed.has(akey(a))) return;" in code, "a dismissed alert hides and comes back"
 
 
 def now_panel(page):
-    """One line for the dev: NEEDS YOU when an alert, a finding or a step waits on them (each with its
-    answer right there), WAIT otherwise, naming who works on what."""
+    """One line for the dev: NEEDS YOU when an item of this worktree or a step waits on them, WAIT
+    otherwise, naming who works on what. Alerts and findings are not repeated there: Now counts
+    this worktree's items and leads to the steps view for the findings."""
     code = script(page)
     n = code[code.index("function showNow"):code.index("const LENS_ROLE")]
     assert 't(act ? "now.act" : "now.wait")' in n and "const act = items.length > 0;" in n
-    assert "alertBody(a, n)" in n and "wireAlerts($(\"now\"), alerts)" in n, "the task's alerts are answered in Now"
-    assert "open.map(findingRow)" in n and "wireFindings($(\"now\"), d)" in n, "open findings are decided in Now"
+    assert "alertBody(" not in n and "findingRow" not in n, "Now repeats no alert and no finding"
+    assert 't("needs.mine", { n: mine.length })' in n and "decideIn(+b.dataset.decide, b.dataset.id)" in n
     assert 'l.state === "running" && l.type !== "main"' in n, "WAIT says which agents work"
-    assert "!(sel && g.wt === sel.wt)" in code, "the waiting block keeps to the other tasks"
+
+
+def needs_list(page):
+    """One list of what needs the dev, grouped Answer, Approve, Decide, Ship, then Idle sessions and
+    a closed Progress group: each item in exactly one row, the count, the title and the sidebar
+    badges counting the same items of the four action groups; amber only for Answer and Approve."""
+    code = script(page)
+    assert 'const NEED_GROUPS = ["answer", "approve", "decide", "ship"];' in code
+    b = code[code.index("function buildNeeds"):code.index("function needRowHTML")]
+    assert 'a.awaits === false ? "progress" : a.idle ? "idle" : a.kind === "permission" ? "approve" : "answer"' in b
+    sh = code[code.index("function showNeeds"):code.index("function decideIn")]
+    assert 'needCount = needItems.filter(i => NEED_GROUPS.includes(i.group)).length;' in sh
+    assert 'document.title = (needCount ? `(${needCount}) ` : "") + "Foreman";' in sh
+    assert "const pending = (wt) => needItems.filter(i => i.wt === wt && NEED_GROUPS.includes(i.group)).length;" in code
+    assert '<details class="ngroup" data-group="progress" hidden>' in page, "Progress starts closed"
+    assert 'id="needs-count" aria-live="polite"' in page
+    assert '.ngroup[data-group="answer"] .nrow, .ngroup[data-group="approve"] .nrow { border-left-color:var(--warn) }' in page
+    assert "function patchRows" in code and 'el.dataset.html !== r.html' in code, "a row whose markup is the same is kept"
+    assert "d.hidden = s.has(r.dataset.row)" in code, "a row not looked at yet has a dot"
+
+
+def findings_fold(page):
+    """Only the findings decision itself folds into its task's Decide row: the main session's held
+    question whose every question text starts with "Findings <ID>:", or its held turn whose whole
+    message is the announcement. Anything else keeps its own row."""
+    code = script(page)
+    f = code[code.index("function findingsAsk"):code.index("const findingsWts")]
+    assert 'if (!a || !a.held || a.agent !== "main" || !id) return false;' in f
+    assert 'a.questions.every(qq => qq && typeof qq.question === "string" && qq.question.startsWith("Findings " + id + ":"))' in f
+    assert 'String(a.message || "").trim() === ANNOUNCE(id)' in f, "the announcement is the turn's whole message"
 
 
 def tree(page):
@@ -295,7 +325,7 @@ def preferences(page):
     assert 'new EventSource("api/events?t=" + encodeURIComponent(TOKEN))' in page and "startPoll()" in page, "live stream with a poll fallback"
 
 
-CHECKS = (whole_finding, quiet_turns, whole_turn, visible_page, released_holds, not_applicable, both_languages, every_word_translated, whole_commands, answers_from_the_page, office, findings_panel, now_panel, tree, switches_on_page,
+CHECKS = (needs_list, findings_fold, whole_finding, quiet_turns, whole_turn, visible_page, released_holds, not_applicable, both_languages, every_word_translated, whole_commands, answers_from_the_page, office, findings_panel, now_panel, tree, switches_on_page,
           noise_collapsed, cleanup_wiring, preferences)
 
 
@@ -321,7 +351,13 @@ MUTATIONS = (
     (answers_from_the_page, "no token", lambda p: p.replace('"X-Kit-Token": TOKEN }, body: JSON.stringify(body) })', '}, body: JSON.stringify(body) })')),
     (office, "no hand", lambda p: p.replace("hand ? '<span class=\"bubble hand\"", "false ? '<span class=\"bubble hand\"")),
     (now_panel, "always WAIT", lambda p: p.replace('t(act ? "now.act" : "now.wait")', 't("now.wait")')),
-    (now_panel, "findings not in Now", lambda p: p.replace("open.map(findingRow)", "[].map(findingRow)")),
+    (now_panel, "Now repeats alerts", lambda p: p.replace('if (mine.length) items.push(', 'mine.forEach(a => items.push(alertBody(a, 0)));\n  if (mine.length) items.push(')),
+    (needs_list, "idle counted", lambda p: p.replace('a.awaits === false ? "progress" : a.idle ? "idle" :', 'a.awaits === false ? "progress" :')),
+    (needs_list, "title counts every row", lambda p: p.replace('document.title = (needCount ? `(${needCount}) `', 'document.title = (needItems.length ? `(${needItems.length}) `')),
+    (needs_list, "amber everywhere", lambda p: p.replace('.ngroup[data-group="answer"] .nrow, .ngroup[data-group="approve"] .nrow {', '.nrow {')),
+    (findings_fold, "fold on the header", lambda p: p.replace('qq.question.startsWith("Findings " + id + ":")', 'String(qq.header).includes(id)')),
+    (findings_fold, "fold any turn", lambda p: p.replace('String(a.message || "").trim() === ANNOUNCE(id)', 'String(a.message || "").includes(id)')),
+    (findings_fold, "subagent folds", lambda p: p.replace('if (!a || !a.held || a.agent !== "main" || !id) return false;', 'if (!a || !a.held || !id) return false;')),
     (switches_on_page, "no risk said", lambda p: p.replace('${t("switch.risk")}', "")),
     (switches_on_page, "posts on the first click", lambda p: p.replace('const dlg = $("dlg");\n  dlg.innerHTML = `<h3>${t("switch.confirm.title."', 'post("api/switch", { wt, name, on });\n  const dlg = $("dlg");\n  dlg.innerHTML = `<h3>${t("switch.confirm.title."')),
     (tree, "no you-are-here", lambda p: p.replace('const here = i === now ? `<span class="you">', 'const here = false ? `<span class="you">')),
@@ -333,7 +369,7 @@ MUTATIONS = (
     (cleanup_wiring, "plan hash not sent", lambda p: p.replace("plan: cleanPlan.plan })", "plan: null })")),
     (preferences, "theme outside try", lambda p: p.replace('try { theme = ["light", "dark", "system"].includes(localStorage.getItem(THEME_KEY)) ? localStorage.getItem(THEME_KEY) : "dark" } catch (e) {}', 'theme = localStorage.getItem(THEME_KEY);')),
     (findings_panel, "decided on the first click", lambda p: p.replace('  const decide = (b, key, decision) => {\n', '  const decide = (b, key, decision) => {\n    post("api/findings-decision", { wt: sel.wt, id: d.id, key, decision });\n')),
-    (findings_panel, "dismissed alerts not restorable", lambda p: p.replace("dismissed.delete(b.dataset.restore)", "dismissed.add(b.dataset.restore)")),
+    (findings_panel, "dismissed alerts not restorable", lambda p: p.replace("dismissed.delete(b.dataset.restore); saveDismissed()", "dismissed.add(b.dataset.restore); saveDismissed()")),
     (released_holds, "released question disabled", lambda p: p.replace('${a.held || a.released ? "" : " disabled"}', '${a.held ? "" : " disabled"}')),
     (released_holds, "released turn silent", lambda p: p.replace("    : a.released ? goneHTML(a, n)\n    : a.turns", "    : a.turns")),
     (released_holds, "no copy for a turn", lambda p: p.replace("<button type=\"button\" data-copy data-gone-for=", "<button type=\"button\" data-gone-for=")),
