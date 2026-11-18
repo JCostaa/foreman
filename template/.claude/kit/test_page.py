@@ -168,7 +168,7 @@ def findings_panel(page):
     waits on the dev offers fix or accept, posted one at a time with its key."""
     code = script(page)
     f = code[code.index("function findingRow"):code.index("let tab = ")]
-    for part in ("esc(lensName(x.lens))", 't("sev." + x.severity)', "esc(x.summary)", 't("fstate." + x.view)', "who(x)"):
+    for part in ("esc(lensName(x.lens))", 't("sev." + x.severity)', "esc(x.full_text || x.summary)", 't("fstate." + x.view)', "who(x)"):
         assert part in f, f"a finding lacks {part}"
     assert 'x.view === "needs-you" && x.state === "open"' in f, "only an open finding that waits on the dev offers a choice"
     assert 'post("api/findings-decision", { wt: sel.wt, id: d.id, key, decision })' in f, "a decision is posted with the finding's key"
@@ -243,6 +243,12 @@ def quiet_turns(page):
     assert "if (seenAlerts.has(key(a)) || !loud(a)) return;" in code, "no beep for a quiet turn"
 
 
+def whole_finding(page):
+    """Each finding is shown whole where the dev decides: its full text and its details."""
+    code = script(page)
+    assert "${esc(x.full_text || x.summary)}" in code and '<div class="fdetail">${esc(x.details)}</div>' in code
+
+
 def switches_on_page(page):
     """The worktree's switches are on the page; turning one on or off asks first (with the risk
     when turning on) and posts with the token only from the confirmation."""
@@ -289,7 +295,7 @@ def preferences(page):
     assert 'new EventSource("api/events?t=" + encodeURIComponent(TOKEN))' in page and "startPoll()" in page, "live stream with a poll fallback"
 
 
-CHECKS = (quiet_turns, whole_turn, visible_page, released_holds, not_applicable, both_languages, every_word_translated, whole_commands, answers_from_the_page, office, findings_panel, now_panel, tree, switches_on_page,
+CHECKS = (whole_finding, quiet_turns, whole_turn, visible_page, released_holds, not_applicable, both_languages, every_word_translated, whole_commands, answers_from_the_page, office, findings_panel, now_panel, tree, switches_on_page,
           noise_collapsed, cleanup_wiring, preferences)
 
 
@@ -335,6 +341,7 @@ MUTATIONS = (
     (whole_turn, "cut message", lambda p: p.replace("${esc(a.message || a.detail)}</div>", "${esc(a.detail).slice(0, 600)}</div>")),
     (whole_turn, "not scrolled", lambda p: p.replace("el.scrollTop = el.scrollHeight", "el.scrollTop = 0")),
     (quiet_turns, "idle beeps", lambda p: p.replace("|| !loud(a)) return;", ") return;")),
+    (whole_finding, "summary only", lambda p: p.replace("${esc(x.full_text || x.summary)}", "${esc(x.summary)}")),
     (not_applicable, "na ignored", lambda p: p.replace("${s.na ? t(\"verdict.na\") : v ?", "${v ?")),
     (preferences, "no live stream", lambda p: p.replace('new EventSource("api/events?t=" + encodeURIComponent(TOKEN))', 'new EventSource("api/events")')),
 )

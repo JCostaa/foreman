@@ -258,6 +258,7 @@ def main():
     close_and_actions()
     event_stream()
     findings_view()
+    whole_findings()
     closing_git()
     findings_decision_endpoint()
     decision_keys()
@@ -2178,6 +2179,40 @@ def findings_view():
     finally:
         shutil.rmtree(base)
 
+
+
+def whole_findings():
+    """Each finding reaches the page whole: its line uncut (full_text) and its details (indented
+    lines, a deeper heading, the items under a heading), masked with the hooks' mask; the summary
+    and the key stay as they were, so a decision recorded before the mask still lands. Task files
+    and the purpose reach the page masked too."""
+    d = load_dashboard("dash_whole")
+    base = tempfile.mkdtemp()
+    try:
+        tdir = os.path.join(base, "T-1")
+        os.makedirs(tdir)
+        flow = json.load(open(FLOW))
+        long = "the export " + "drops rows " * 30 + "at the end"
+        open(os.path.join(tdir, "04-review-qa.md"), "w").write(
+            "Verdict: PASS_WITH_FINDINGS\n\n## Findings\n- [high] " + long + "\n  Scenario: an empty report.\n"
+            "  Fix: PASSWORD=hunter2 in the fixture must go.\n\n### 2. (medium) A heading finding\n\n"
+            "Why it matters.\n\n#### Fix\n- write the test\n\n## Contract coverage\n- x\n")
+        items = d.decided_findings(tdir, d.stages(flow, tdir))
+        assert len(items) == 2, items
+        a, b = items
+        assert len(a["summary"]) == 200 and a["full_text"].endswith("at the end"), a
+        assert "Scenario: an empty report." in a["details"] and "hunter2" not in a["details"], a["details"]
+        assert "Why it matters." in b["details"] and "#### Fix" in b["details"] and "write the test" in b["details"], \
+            f"a deeper heading stays in its finding: {b}"
+        open(os.path.join(tdir, "00-purpose.md"), "w").write("# T-1 x\nAPI_TOKEN=abc123\n")
+        root = new_repo(base)
+        w = os.path.join(root, ".work", "T-1")
+        shutil.copytree(tdir, w)
+        detail = d.task_detail(root, 0, "T-1")
+        assert "abc123" not in detail["purpose"] and "hunter2" not in detail["files"]["04-review-qa.md"], \
+            "the purpose and the review text reach the page masked"
+    finally:
+        shutil.rmtree(base)
 
 
 def closing_docs():

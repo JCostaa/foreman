@@ -91,7 +91,7 @@
   .fcard.needs-you { border-left-color:var(--warn); box-shadow:var(--glow) } .fcard.agent, .fcard.fixing { border-left-color:var(--run) } .fcard.fixed, .fcard.accepted { border-left-color:var(--ok); opacity:.8 }
   .fhead { display:flex; align-items:center; gap:8px; flex-wrap:wrap } .fhead .fstate { margin-left:auto }
   .sev { font-size:11px; color:var(--mute) } .sev.critical, .sev.high { color:var(--bad) } .sev.medium { color:var(--warn) }
-  .ftext { margin:6px 0; overflow-wrap:anywhere } .factor { color:var(--mute); font-size:12px }
+  .ftext { margin:6px 0; overflow-wrap:anywhere } .fdetail { white-space:pre-wrap; overflow-wrap:anywhere; font-size:12px; color:var(--mute); margin:4px 0; max-height:240px; overflow:auto } .factor { color:var(--mute); font-size:12px }
   /* files, rulings, events */
   .pipe { display:flex; flex-wrap:wrap; gap:6px; align-items:center }
   .chip { display:inline-flex; align-items:center; gap:6px; border-radius:3px; background:var(--card2) }
@@ -1480,7 +1480,7 @@ function findingRow(x) {
   const sev = `<span class="sev ${esc(x.severity)}">${has("sev." + x.severity) ? t("sev." + x.severity) : esc(x.severity)}</span>`;
   const choose = x.view === "needs-you" && x.state === "open"
     ? `<div class="actions"><button class="primary" data-fix="${esc(x.key)}">${t("fpick.fix", { agent: roleName(x.route || "executor") })}</button><button data-accept="${esc(x.key)}">${t("fpick.accept")}</button></div>` : "";
-  return `<div class="finding ${esc(x.view)}"><div class="fhead">${sev}<span class="ftext">${esc(lensName(x.lens))}: ${esc(x.summary)}</span><span class="fstate ${esc(x.view)}">${t("fstate." + x.view)}</span></div><div class="factor">${who(x)}</div>${choose}</div>`;
+  return `<div class="finding ${esc(x.view)}"><div class="fhead">${sev}<span class="ftext">${esc(lensName(x.lens))}: ${esc(x.full_text || x.summary)}</span><span class="fstate ${esc(x.view)}">${t("fstate." + x.view)}</span></div>${x.details ? `<div class="fdetail">${esc(x.details)}</div>` : ""}<div class="factor">${who(x)}</div>${choose}</div>`;
 }
 function wireFindings(box, d) {
   const decide = (b, key, decision) => {

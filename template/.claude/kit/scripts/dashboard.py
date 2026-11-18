@@ -50,6 +50,7 @@ import shutil
 import socket
 import subprocess
 import sys
+import textwrap
 import threading
 import time
 import urllib.error
@@ -436,7 +437,8 @@ def task_state(stage_list, lanes, tdir, mr, lookup_possible=True):
 
 
 FINDING_ITEM = re.compile(r"^(?:[-*]|\d+[.)])\s+(.*)$")
-FINDING_HEADING = re.compile(r"^#{3,}\s+(.*)$")
+FINDING_HEADING = re.compile(r"^(#{3,})\s+(.*)$")
+FINDING_DETAILS_MAX = 6000
 SEVERITY_NAMES = r"critical|blocker|high|major|important|medium|low|minor|info"
 SEVERITY_WORD = re.compile(r"\b(" + SEVERITY_NAMES + r")\b", re.I)
 # Forms the reviews use, most explicit first: "Severity: medium", "[medium]" or "(medium)",
@@ -467,18 +469,19 @@ def severity(text):
     return SEVERITY_OF.get(word, word)
 
 
-def summary_of(text):
+def summary_of(text, limit=200):
     text = re.sub(r"\s+", " ", re.sub(r"[*`]", "", text)).strip()
     text = re.sub(r"^\d+[.)]\s+", "", text)
     # The kit's route tag says who fixes it (scripts/decisions.py), not what the finding is.
-    return re.sub(r"^\[route:\s*\w+\]\s*", "", SEVERITY_LEAD.sub("", text, count=1), flags=re.I)[:200]
+    return re.sub(r"^\[route:\s*\w+\]\s*", "", SEVERITY_LEAD.sub("", text, count=1), flags=re.I)[:limit]
 
 
 def review_findings(tdir, stage_list):
-    """[{lens, severity, summary}] from the "## Findings" section of every review that is not a
-    plain PASS. A finding is a top-level list item, or a `###` heading that is numbered or starts
-    with its severity; the list items under such a heading are its details, and a "Severity:"
-    line there gives the severity the heading did not."""
+    """[{lens, severity, summary, full_text, details}] from the "## Findings" section of every
+    review that is not a plain PASS. A finding is a top-level list item, or a `###` heading that is
+    numbered or starts with its severity; what follows it (indented lines, a deeper heading, the
+    list items under a heading) is its details, and a "Severity:" line there gives the severity
+    the heading did not."""
     out = []
     for s in stage_list:
         if not s["needs_verdict"] or s["verdict"] not in ("PASS_WITH_FINDINGS", "FAIL"):
@@ -488,30 +491,57 @@ def review_findings(tdir, stage_list):
         text = read(os.path.join(tdir, s["file"])) or ""
         sec = re.search(r"^##\s+Findings\s*$(.*?)(?=^##\s|\Z)", text, re.M | re.S)
         heading = None  # the finding a heading opened, while its details follow
+        level = 0  # that heading's depth: a deeper heading (#### Fix) is part of its details
+        current = None  # the finding the next indented or blank lines belong to
         for line in (sec.group(1) if sec else "").splitlines():
             h = FINDING_HEADING.match(line)
+            if h and heading is not None and len(h.group(1)) > level:
+                heading["_details"].append(line)
+                continue
             if h:
-                body = h.group(1).strip()
+                body = h.group(2).strip()
                 if re.match(r"^\d+[.)]\s", body) or SEVERITY_LEAD.match(body) and SEVERITY_WORD.match(
                         re.sub(r"^[\[(*\s]+", "", body)):
                     heading = {"lens": lens, "severity": severity(body), "summary": summary_of(body),
-                               "route": decisions.route_of(body), "verdict": s["verdict"]}
+                               "full_text": summary_of(body, None), "route": decisions.route_of(body),
+                               "verdict": s["verdict"], "_details": []}
+                    level = len(h.group(1))
                     out.append(heading)
                 else:
                     heading = None
+                current = heading
                 continue
             if heading is not None:
                 if heading["severity"] == "unknown" and SEVERITY_FORMS[0].search(line):
                     heading["severity"] = severity(line)
+                heading["_details"].append(line)
                 continue
             item = FINDING_ITEM.match(line)
             if not item:
+                # A list finding's details: its indented sub-items and paragraphs.
+                if current is not None and (not line.strip() or line[:1] in " \t"):
+                    current["_details"].append(line)
+                else:
+                    current = None
                 continue
             body = item.group(1).strip()
             if re.fullmatch(r"(none|nothing|n/?a)\.?", body, re.I):
+                current = None
                 continue
-            out.append({"lens": lens, "severity": severity(body), "summary": summary_of(body),
-                        "route": decisions.route_of(body), "verdict": s["verdict"]})
+            current = {"lens": lens, "severity": severity(body), "summary": summary_of(body),
+                       "full_text": summary_of(body, None), "route": decisions.route_of(body),
+                       "verdict": s["verdict"], "_details": []}
+            out.append(current)
+    # The dev decides on the whole finding (scenario, fix), not on a title cut at 200 characters:
+    # the details go to the page, masked with the hooks' mask like every alert text. The key and
+    # the match of an older keyless line read the raw words, so a decision recorded before the
+    # mask still lands; every text the page gets is masked.
+    for f in out:
+        f["key"] = finding_key(f)
+        f["_raw"] = norm_summary(f["summary"])
+        f["summary"] = _FLOW.mask(f["summary"])
+        f["full_text"] = _FLOW.mask(f["full_text"])
+        f["details"] = _FLOW.mask(textwrap.dedent("\n".join(f.pop("_details"))).strip())[:FINDING_DETAILS_MAX]
     return out
 
 
@@ -568,13 +598,13 @@ def decided_findings(tdir, stage_list, pins=None):
         if pins is not None and not entry[5]:
             pins[entry[4]] = f["key"]
     for f in items:
-        f["key"] = finding_key(f)
+        f["key"] = f.get("key") or finding_key(f)
         f["decision"] = f["state"] = None
         if f["key"] in keyed:
             decide(f, keyed[f["key"]])
     for f in items:
         hit = next((e for e in legacy if f["state"] is None and e[2] == f["lens"].lower()
-                    and e[3] == norm_summary(f["summary"])), None)
+                    and e[3] in (f.get("_raw"), norm_summary(f["summary"]))), None)
         if hit:
             legacy.remove(hit)
             decide(f, hit)
@@ -605,6 +635,7 @@ def decided_findings(tdir, stage_list, pins=None):
                 f["reopened"] = True
     for f in items:
         f["state"] = f["state"] or "open"
+        f.pop("_raw", None)
     return items
 
 
@@ -1011,8 +1042,10 @@ def task_detail(root, wt_index, tid, now=None):
     current = (read(os.path.join(wdir, "current"), 200) or "").strip()
     branch = task_branch(tdir, branch)
     state = full_state(wt, branch, flow, tid, tdir, lanes, st, mr_lookup(wt, branch, flow, now), current, root)
-    files = {s["file"]: read(os.path.join(tdir, s["file"])) for s in st if s["written"]}
-    purpose = read(os.path.join(tdir, "00-purpose.md")) or ""
+    # Review and stage text goes to the page through the hooks' mask, like every alert text: a
+    # reviewer quoting a credential must not put it on the screen.
+    files = {s["file"]: mask_text(read(os.path.join(tdir, s["file"]))) for s in st if s["written"]}
+    purpose = mask_text(read(os.path.join(tdir, "00-purpose.md")) or "")
     lane = re.search(r"^Lane:\s*(\w+)", purpose, re.M | re.I)
     # The template's example ruling sits inside an HTML comment: it is not a decision.
     ledger = re.sub(r"<!--.*?-->", "", read(os.path.join(tdir, "ledger.md")) or "", flags=re.S)
