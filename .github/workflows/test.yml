@@ -30,3 +30,12 @@ jobs:
           "$GITHUB_WORKSPACE/install.sh" /tmp/old --replace | grep '^replaced .claude/agents/reviewer.md'
           grep -rqx '# mine' .agent-flow-backup
           ! grep -qx '# mine' .claude/agents/reviewer.md
+  page-browser:
+    # The dashboard in a real browser: what test_page.py reads as text, clicked and counted.
+    runs-on: ubuntu-latest
+    container: mcr.microsoft.com/playwright/python:v1.65.2-noble
+    steps:
+      - uses: actions/checkout@v4
+      - run: command -v git >/dev/null || (apt-get update -qq && apt-get install -y -qq --no-install-recommends git >/dev/null)
+      - run: python3 -c "import playwright" 2>/dev/null || python3 -m pip install -q --break-system-packages playwright==1.65.2
+      - run: python3 template/.claude/kit/test_page_browser.py
