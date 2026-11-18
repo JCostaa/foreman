@@ -95,7 +95,8 @@ LOCAL_HOSTS = ("127.0.0.1", "localhost")
 
 # Values the page translates (index.html); stage agent names of flow.json are statuses too,
 # returned while the task is between stages.
-STATUSES = ("purpose", "running", "blocked", "clarify", "findings", "fixing", "ready-for-mr", "done", "FAIL")
+# "triage" is only the synthetic task of a worktree whose session has not run `work.sh init` yet.
+STATUSES = ("purpose", "running", "blocked", "clarify", "findings", "fixing", "ready-for-mr", "done", "FAIL", "triage")
 NEXT_STEPS = ("contract", "change", "proof", "reviews", "wait", "unblock", "clarify", "fix-fail",
               "decide-findings", "wait-fixes", "fix-loop", "open-mr", "fix-mr-check", "mark-done", "clean-up")
 WARNINGS = ("fail-unresolved",)
@@ -996,7 +997,8 @@ def worktree_tasks(wt, branch, now, lookup=True, root=None):
     wdir = work_dir(wt)
     ids = task_ids(wdir) if wdir else []
     if not ids:
-        return []
+        triage = triage_task(wt, wdir, now)
+        return [triage] if triage else []
     flow, evs = flow_of(wt), events(wdir)
     current = (read(os.path.join(wdir, "current"), 200) or "").strip()
     lookups = {}
@@ -1011,6 +1013,56 @@ def worktree_tasks(wt, branch, now, lookup=True, root=None):
                       "updated": max([e.get("t", 0) for e in mine] or [os.path.getmtime(tdir)])})
     tasks.sort(key=lambda t: (not t["current"], -t["updated"]))
     return tasks
+
+
+TRIAGE_STAGE = {"agent": "triage", "file": None, "written": False, "needs_verdict": False, "verdict": None}
+# A task KEY (ABC-12): written in <work dir>/attention/.task-key by `work.sh triage <ID>`, or the
+# name of a worktree opened for that key.
+KEY_RX = re.compile(r"^[A-Z][A-Z0-9]*-\d+$")
+TASK_KEY_FILE = ".task-key"
+
+
+def triage_id(wt):
+    """The task KEY of a worktree opened for a task: the one recorded in it, else its name when the
+    name is a key (abc-12 gives ABC-12), else None. Only a linked worktree (its .git is a file): the
+    main checkout, or a worktree with neither, often has a session doing anything but a triage."""
+    if not os.path.isfile(os.path.join(wt, ".git")):
+        return None
+    wdir = work_dir(wt)
+    recorded = (read(os.path.join(wdir, "attention", TASK_KEY_FILE), 100) or "").strip() if wdir else ""
+    if KEY_RX.match(recorded):
+        return recorded
+    name = os.path.basename(wt).upper()
+    return name if KEY_RX.match(name) else None
+
+
+def triage_task(wt, wdir, now):
+    """The synthetic task of a worktree whose session is still in the task skill's triage: the
+    session asks language, lane and the interview before `work.sh init` writes 00-purpose.md, and
+    without this the worktree showed nothing for minutes, read as broken. None when the worktree has
+    a task or no live session: the real task replaces this one."""
+    tid = triage_id(wt) if wdir and not task_ids(wdir) else None
+    if not tid or not live_session(wdir, now):
+        return None
+    adir, marks = os.path.join(wdir, "attention"), []
+    try:
+        sessions = os.listdir(adir)
+    except OSError:
+        sessions = []
+    for session in sessions:
+        if safe_id(session):
+            marks.append(mtime_ns(os.path.join(adir, session, SESSION_MARKER)) or 0)
+    # Live through an alert or an event only: no marker to date it, so it is as recent as now.
+    updated = max(marks) / 1e9 if any(marks) else now
+    st = [dict(TRIAGE_STAGE)] + [dict(x) for x in stages(flow_of(wt), os.path.join(wdir, tid))]
+    for x in st:
+        x["written"], x["verdict"], x["na"], x["settled"] = False, None, False, False
+    # Nothing to close, clean or decide: the next step is answering the session, which the
+    # worktree's alerts already say.
+    return {"id": tid, "title": "triage", "triage": True, "status": "triage", "warning": None,
+            "closed_by": None, "mr": None, "next_step": None, "cleanable": False, "closable": False,
+            "command": None, "command_kind": None, "branch_kind": None, "findings": [], "findings_open": 0,
+            "findings_reason": None, "findings_review_newer": [], "current": False, "updated": updated, "stages": st}
 
 
 def list_tasks(root, now=None):
@@ -1034,8 +1086,15 @@ def task_detail(root, wt_index, tid, now=None):
         return None
     wt, branch = wts[wt_index]
     wdir = work_dir(wt)
-    if not wdir or tid not in task_ids(wdir):
+    if not wdir:
         return None
+    if tid not in task_ids(wdir):
+        triage = triage_task(wt, wdir, now)
+        if not triage or triage["id"] != tid:
+            return None
+        return {**triage, "worktree": os.path.basename(wt), "path": wt, "branch": branch, "purpose": None, "lane": None,
+                "clarified": 0, "rounds": 0, "max_rounds": flow_of(wt).get("max_fix_rounds", 3), "rulings": [],
+                "files": {}, "agents": [], "events": []}
     tdir, flow = os.path.join(wdir, tid), flow_of(wt)
     mine = events(wdir).get(tid, [])
     lanes, st = agents(mine, now), stages(flow, tdir)
@@ -1193,8 +1252,10 @@ def list_attention(root, now=None, visible=True):
         memory = [{"id": tid, "action": "open-session", "command": f"cd {q(wt)} && claude {q('review the auto memory of ' + tid)}", "command_kind": "shell"}
                   for tid in pending]
         check = mr_check(wt, branch, now, root)
-        # A memory request nobody consumed and a failed MR lookup wait on the dev too.
-        if found or pending or check:
+        # A memory request nobody consumed and a failed MR lookup wait on the dev too. A live session
+        # with no task and no alert up (a triage between two questions) is listed as well: it
+        # carries the switches, and turning one off used to hide the row and the way back.
+        if found or pending or check or live_session(wdir, now):
             groups.append({"wt": i, "name": os.path.basename(wt), "branch": branch, "path": wt,
                            "here": os.path.realpath(wt) == os.path.realpath(root),
                            "answers": answers_on, "turns": os.path.exists(os.path.join(adir, "turns-on")), "alerts": found,
@@ -1616,7 +1677,8 @@ def close_task(root, body, now=None):
             or not ID_RX.fullmatch(tid):
         return 404, failure("no-such-task", "no such task")
     task = next((t for t in worktree_tasks(wts[wi][0], wts[wi][1], now, root=root) if t["id"] == tid), None)
-    if task is None:
+    # A triage task has no directory to write `closed` into: it ends when `work.sh init` runs.
+    if task is None or task.get("triage"):
         return 404, failure("no-such-task", "no such task")
     if task["status"] == "done":
         return 409, failure("already-done", "already done")

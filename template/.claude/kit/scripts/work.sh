@@ -2,6 +2,8 @@
 # Work directory of Foreman (.claude/kit/PROTOCOL.md).
 #
 # Usage: work.sh init <ID> ["title"]   creates .work/<ID>/ (purpose, ledger with the base commit), marks it current
+#        work.sh triage <ID>           records the task's key while the triage runs (before init), so the
+#                                      dashboard shows the worktree as that task in triage
 #        work.sh status                every stage: gate, status or verdict, open clarifications, what is next
 #        work.sh review-package        writes .work/<ID>/review.diff (commits and diff since the base) for the reviewers
 #        work.sh done [ID]             closes the task (current one by default): writes <ID>/closed, which
@@ -71,6 +73,11 @@ EOF
     fi
     echo "$id" > "$work/current"
     echo "$work/$id/00-purpose.md"
+    ;;
+  triage)
+    id="${2:?usage: work.sh triage <ID>}"
+    [[ "$id" =~ ^[A-Z][A-Z0-9]*-[0-9]+$ ]] || { echo "the key must look like ABC-12 (got: $id)" >&2; exit 1; }
+    mkdir -p "$work/attention" && echo "$id" > "$work/attention/.task-key"
     ;;
   status)
     id=$(cat "$work/current" 2>/dev/null || true)
@@ -173,5 +180,5 @@ sys.exit(1)') || { echo "no free port in 8787-8799" >&2; exit 2; }
         ;;
     esac
     ;;
-  *) sed -n 2,22p "$0"; exit 2 ;;
+  *) sed -n 2,24p "$0"; exit 2 ;;
 esac

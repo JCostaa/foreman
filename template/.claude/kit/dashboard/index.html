@@ -650,7 +650,10 @@ const I18N = /* i18n:begin */{
   "side.items": "{n} item(s) need you",
   "side.part": "part {k}/{n}",
   "side.wt-items": "needs you, no task row",
-  "menu.title": "Settings: language, theme, sound and notifications"
+  "menu.title": "Settings: language, theme, sound and notifications",
+  "status.triage": "Triage",
+  "status.triage.m": "The session is in the triage: it asks the lane and the interview before the task's purpose is written.",
+  "tl.triage": "triage"
  },
  "pt": {
   "lang.button": "PT / EN",
@@ -1055,11 +1058,14 @@ const I18N = /* i18n:begin */{
   "side.items": "{n} item(ns) precisam de você",
   "side.part": "parte {k}/{n}",
   "side.wt-items": "precisa de você, sem linha de tarefa",
-  "menu.title": "Ajustes: idioma, tema, som e notificações"
+  "menu.title": "Ajustes: idioma, tema, som e notificações",
+  "status.triage": "Triagem",
+  "status.triage.m": "A sessão está na triagem: pergunta a trilha e faz a entrevista antes de escrever o propósito da tarefa.",
+  "tl.triage": "triagem"
  }
 }/* i18n:end */;
 // Statuses dashboard.py returns by name; any other status is the agent of the last stage written.
-const STATUSES = ["running", "blocked", "clarify", "FAIL", "findings", "fixing", "ready-for-mr", "done", "purpose"];
+const STATUSES = ["running", "blocked", "clarify", "FAIL", "findings", "fixing", "ready-for-mr", "done", "purpose", "triage"];
 // What the page shows instead of "ready-for-mr" when the PR/MR cannot be seen.
 const SHOWN = { "fix-mr-check": "mr-unchecked", "mark-done": "ready-to-close" };
 const shown = (k) => k.status === "ready-for-mr" && SHOWN[k.next_step] ? SHOWN[k.next_step] : k.status;
@@ -1171,7 +1177,7 @@ const roomName = (r) => r.name ? String(pick(r.name)) : t("room." + r.id);
 const roomOf = (agent) => (rooms().find(r => r.agents.includes(agent)) || rooms()[0]).id;
 const STAGE_STEP = { refiner: "contract", executor: "change", tester: "proof" };
 function stepRoom(st) {
-  if (st.key === "purpose") return roomOf("refiner");
+  if (st.key === "purpose" || st.key === "triage") return roomOf("refiner");
   if (st.key === "reviews") return roomOf((st.lenses[0] || {}).agent || "reviewer");
   if (st.key === "decision" || st.key === "closed") return roomOf("main");
   return roomOf(st.role);
@@ -1767,9 +1773,11 @@ async function showTask() {
 // The task's steps, and the one it is at.
 function steps(d) {
   const lenses = d.stages.filter(s => s.needs_verdict), retro = d.stages.find(s => s.agent === "retrospective");
-  const before = d.stages.filter(s => !s.needs_verdict && s !== retro);
+  const before = d.stages.filter(s => !s.needs_verdict && s !== retro && s.agent !== "triage");
   const verdicts = lenses.filter(s => s.verdict).length, anyFindings = lenses.some(s => s.verdict === "PASS_WITH_FINDINGS");
-  const list = [{ key: "purpose", label: t("tl.purpose"), ok: true, role: "foreman" }];
+  // A triage task (no purpose yet): a Triage step, current, with every stage after it to come.
+  const list = d.triage ? [{ key: "triage", label: t("tl.triage"), ok: false, role: "foreman" }, { key: "purpose", label: t("tl.purpose"), ok: false, role: "foreman" }]
+    : [{ key: "purpose", label: t("tl.purpose"), ok: true, role: "foreman" }];
   before.forEach(s => list.push({ key: STAGE_STEP[s.agent] || "contract", label: STAGE_STEP[s.agent] ? t("tl." + STAGE_STEP[s.agent]) : esc(roleName(s.agent)), ok: s.written, role: s.agent, stage: s }));
   const reviewed = lenses.length > 0 && verdicts === lenses.length;
   list.push({ key: "reviews", label: t("tl.reviews", { n: verdicts, total: lenses.length }), ok: reviewed, lenses });

@@ -268,6 +268,7 @@ def main():
     alert_text()
     turn_awaits()
     findings_decided_message()
+    triage_task()
     language_hook()
     rooms_and_agents()
     switches()
@@ -2661,6 +2662,52 @@ def findings_decided_message():
         assert got["message"] == d.FINDINGS_DECIDED.format(id="T-1"), got
     finally:
         shutil.rmtree(root)
+
+
+def triage_task():
+    """A linked worktree named after a KEY (or with `work.sh triage <ID>` recorded), a live session
+    and no task directory lists one synthetic triage task; the main checkout or another name does
+    not; Mark as done refuses it; a dead session lists nothing; the real task replaces it."""
+    d = load_dashboard("dash_triage")
+    base = tempfile.mkdtemp()
+    try:
+        repo = new_repo(base)
+        wt, odd = os.path.join(base, "abc-12"), os.path.join(base, "spike")
+        git_in(repo, "worktree", "add", "-q", "-b", "w-abc-12", wt)
+        git_in(repo, "worktree", "add", "-q", "-b", "w-spike", odd)
+        now = time.time()
+
+        def session(w, pid):
+            adir = os.path.join(w, ".work", "attention", "s1")
+            os.makedirs(adir, exist_ok=True)
+            open(os.path.join(adir, ".session"), "w").write(json.dumps({"claude_pid": pid, "since": now}))
+
+        listed = lambda: {g["name"]: g["tasks"] for g in d.list_tasks(repo, now)}
+        assert listed() == {}, "no session, no task: nothing listed"
+        for w in (wt, odd, repo):
+            session(w, os.getpid())
+        got = listed()
+        assert set(got) == {"abc-12"}, got
+        [k] = got["abc-12"]
+        assert k["id"] == "ABC-12" and k["triage"] and k["status"] == "triage" and k["stages"][0]["agent"] == "triage", k
+        assert not any(x["written"] for x in k["stages"]) and not k["closable"] and not k["cleanable"]
+        wi = next(i for i, (p, _) in enumerate(d.worktrees(repo)) if os.path.basename(p) == "abc-12")
+        assert d.task_detail(repo, wi, "ABC-12", now)["status"] == "triage"
+        assert d.close_task(repo, {"wt": wi, "id": "ABC-12"}, now)[0] == 404
+        p = subprocess.run(["bash", WORK_SH, "triage", "SPK-7"], capture_output=True, text=True, env=dict(os.environ, CLAUDE_PROJECT_DIR=odd))
+        assert p.returncode == 0, p.stderr
+        assert [k["id"] for k in listed()["spike"]] == ["SPK-7"], "a recorded key names the triage"
+        assert subprocess.run(["bash", WORK_SH, "triage", "bad"], capture_output=True, env=dict(os.environ, CLAUDE_PROJECT_DIR=odd)).returncode != 0
+        dead = subprocess.Popen(["true"])
+        dead.wait()
+        session(wt, dead.pid)
+        assert "abc-12" not in listed(), "a dead session lists nothing"
+        session(wt, os.getpid())
+        add_task(wt, "ABC-12")
+        [k] = listed()["abc-12"]
+        assert k["status"] != "triage" and "triage" not in k, k
+    finally:
+        shutil.rmtree(base)
 
 
 def page_holds():
