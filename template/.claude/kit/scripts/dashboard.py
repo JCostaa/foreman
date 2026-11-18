@@ -292,7 +292,10 @@ def status(stage_list, lanes, tdir=None):
         # decision file is newer than the reviews: one line must not settle three findings.
         with_findings = any(s["verdict"] == "PASS_WITH_FINDINGS" for s in verdicts)
         items = decided_findings(tdir, stage_list) if with_findings else []
-        if with_findings and not (findings_decided(tdir, verdicts) and not any(f["decision"] is None for f in items)):
+        # Something to decide: a finding with no decision line, or findings the dev never dated a
+        # decision for. A lens re-run that brings no undecided finding (a PASS, or findings already
+        # decided) asks nothing: the page asked to decide with 0 open after two lenses re-ran clean.
+        if with_findings and (any(f["decision"] is None for f in items) or not header):
             return "findings"
         # A fix round is not ready for a PR/MR: a finding decided fix and not yet fixed, an agent
         # of the flow at work, or a stage whose file an earlier stage's agent will rewrite (the
@@ -508,7 +511,7 @@ def findings_view(tdir, stage_list, st):
             reason = "no-decision"
         elif not text.startswith("Decided:"):
             reason = "decision-without-date"
-        else:
+        elif any(f["decision"] is None for f in items):
             decided = mtime_ns(path) or 0
             newer = [re.sub(r"^04-review-(.+)\.md$", r"\1", s["file"]) for s in stage_list
                      if s["needs_verdict"] and s["written"] and (mtime_ns(os.path.join(tdir, s["file"])) or 0) > decided]
@@ -571,6 +574,18 @@ def decided_findings(tdir, stage_list, pins=None):
             if len(same) == 1 and len(lines) == 1:
                 legacy.remove(lines[0])
                 decide(f, lines[0])
+    # A fix is proven by the lens re-running without the finding. A review newer than the decision
+    # file that still lists a finding decided `fix` or marked `fixed` says the problem is still
+    # there: the finding opens again, never "ready for PR/MR" on an old line. `accepted` carries
+    # over: it was the dev's call on that very text.
+    decided_at = mtime_ns(path) if text is not None else None
+    if decided_at:
+        newer = {re.sub(r"^04-review-(.+)\.md$", r"\1", s["file"]).lower() for s in stage_list
+                 if s["needs_verdict"] and s["written"] and (mtime_ns(os.path.join(tdir, s["file"])) or 0) > decided_at}
+        for f in items:
+            if f["decision"] == "fix" and f["lens"].lower() in newer:
+                f["decision"] = f["state"] = None
+                f["reopened"] = True
     for f in items:
         f["state"] = f["state"] or "open"
     return items

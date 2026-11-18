@@ -248,6 +248,7 @@ def main():
     closing_status()
     fix_round_status()
     partial_rerun_status()
+    reopened_findings()
     closing_mr()
     mr_fetch_http()
     work_done()
@@ -1019,6 +1020,90 @@ def partial_rerun_status():
         shutil.rmtree(base)
 
 
+def reopened_findings():
+    """A lens that re-runs and still lists a finding decided fix or marked fixed, in the same words
+    (so the same key): the problem is still there, the finding opens again and the task asks the
+    dev. An accepted one carries over. Nothing undecided asks nothing: "some-open" agrees with the
+    open count, never with 0 open."""
+    d = load_dashboard("dash_reopened")
+    base = tempfile.mkdtemp()
+    try:
+        flow = json.load(open(FLOW))
+        s0 = 1_700_000_000
+
+        def make(name):
+            t = os.path.join(base, name)
+            os.makedirs(t)
+            for i, f in enumerate(("01-contract.md", "02-change.md", "03-proof.md")):
+                put(t, f, "x\n", s0 + i)
+            return t
+
+        def put(t, name, text, at):
+            open(os.path.join(t, name), "w").write(text)
+            os.utime(os.path.join(t, name), (at, at))
+
+        def decide_all(t, word, at):
+            items = d.decided_findings(t, d.stages(flow, t))
+            put(t, "findings-decision.md", "Decided: 2026-11-17\n" + "".join(
+                f"- {word} {f['severity']} {f['lens']} [{f['key']}]: {f['summary']}\n" for f in items), at)
+
+        t = make("T-2")
+        for f in REVIEWS:
+            put(t, f, "Verdict: PASS_WITH_FINDINGS\n\n## Findings\n- [high] the hold drops the answer\n", s0 + 10)
+        decide_all(t, "fixed", s0 + 60)
+        for f in REVIEWS:
+            os.utime(os.path.join(t, f), (s0 + 90, s0 + 90))  # re-ran after the round, same finding
+        st = d.stages(flow, t)
+        got = d.task_state(st, [], t, None)
+        assert got["status"] == "findings", f"a re-review still listing a fixed finding opens it again: {got}"
+        items = d.decided_findings(t, st)
+        assert all(f["state"] == "open" and f.get("reopened") for f in items), items
+        full = d.full_state(base, "feat/x", flow, "T-2", t, [], st, None, "", base)
+        assert all(f["view"] == "needs-you" for f in full["findings"]), \
+            f"a reopened finding is the dev's, not the fix loop's: {full['findings']}"
+        decide_all(t, "accepted", s0 + 60)
+        for f in REVIEWS:
+            os.utime(os.path.join(t, f), (s0 + 90, s0 + 90))
+        assert all(f["state"] == "accepted" for f in d.decided_findings(t, d.stages(flow, t))), "accepted stays accepted"
+
+        # Two lenses re-ran clean after the decision, every finding fixed: nothing to decide.
+        t = make("T-3")
+        for f in REVIEWS:
+            put(t, f, "Verdict: PASS\n", s0 + 10)
+        put(t, "04-review-product.md", "Verdict: PASS_WITH_FINDINGS\n\n## Findings\n" +
+            "".join(f"- [medium] product finding {n}\n" for n in range(4)), s0 + 10)
+        decide_all(t, "fixed", s0 + 20)
+        put(t, "04-review-contract.md", "Verdict: PASS\n", s0 + 30)
+        put(t, "04-review-qa.md", "Verdict: PASS\n", s0 + 30)
+        st = d.stages(flow, t)
+        status = d.status(st, [], t)
+        view = d.findings_view(t, st, status)
+        assert status == "ready-for-mr" and view["findings_open"] == 0 and view["findings_reason"] is None, \
+            f"nothing to decide after clean re-runs: {status}, {view['findings_reason']}"
+
+        # A FAIL lens, every finding decided fix, the executor done and the tester next.
+        t = make("T-4")
+        for f in REVIEWS:
+            put(t, f, "Verdict: PASS_WITH_FINDINGS\n\n## Findings\n- [high] one\n- [medium] two\n", s0 + 10)
+        put(t, "04-review-security.md", "Verdict: FAIL\n\n## Findings\n- [high] the token leaks\n", s0 + 10)
+        decide_all(t, "fix", s0 + 20)
+        executor = {"agent": "e2", "type": "executor", "state": "ok", "start": s0 + 30, "end": s0 + 100, "ran": True,
+                    "seen": s0 + 100, "tools": 9}
+        st = d.stages(flow, t)
+        state = d.task_state(st, [executor], t, None)
+        view = d.findings_view(t, st, state["status"])
+        assert state["status"] == "fixing", f"between executor and tester: the fix round: {state}"
+        assert view["findings_open"] == 0 and view["findings_reason"] is None, f"no 'some-open' with 0 open: {view}"
+        put(t, "04-review-qa.md", "Verdict: PASS_WITH_FINDINGS\n\n## Findings\n- [high] one\n- [low] brand new\n", s0 + 200)
+        st = d.stages(flow, t)
+        status = d.status(st, [executor], t)
+        view = d.findings_view(t, st, status)
+        # Two open: "brand new", and "one", which the re-run lens still lists after its fix.
+        assert status == "FAIL" and view["findings_open"] == 2, f"a finding not decided waits on the dev: {status}, {view}"
+    finally:
+        shutil.rmtree(base)
+
+
 def closing_status():
     """A1, A8: "done" only from an MR (opened or merged) or the closed marker; before that,
     "findings" until findings-decision.md is at least as new as every review."""
@@ -1053,8 +1138,10 @@ def closing_status():
         put("findings-decision.md", "- accepted minor qa: x\n", t0 + 10**9)
         assert state()["status"] == "findings", "a decision file without its 'Decided:' line is not a decision"
         put("findings-decision.md", "Decided: 2026-11-16\n- accepted minor qa: x\n", t0 + 10**9)
-        put("04-review-qa.md", "Verdict: PASS_WITH_FINDINGS\n", t0 + 2 * 10**9)
-        assert state()["status"] == "findings", "a lens re-run after the decision reopens it"
+        put("04-review-qa.md", "Verdict: PASS_WITH_FINDINGS\n\n## Findings\n- [low] x\n", t0 + 2 * 10**9)
+        assert state()["status"] == "ready-for-mr", "a lens re-run that brings only decided findings asks nothing"
+        put("04-review-qa.md", "Verdict: PASS_WITH_FINDINGS\n\n## Findings\n- [low] x\n- [medium] a new one\n", t0 + 2 * 10**9)
+        assert state()["status"] == "findings", "a lens re-run with a finding not decided reopens it"
         os.remove(os.path.join(tdir, "findings-decision.md"))
 
         verdicts("PASS", "PASS", "PASS", "PASS")
