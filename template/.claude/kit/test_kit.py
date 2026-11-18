@@ -436,8 +436,8 @@ def ship():
             os.chmod(path, 0o755)
         script = os.path.join(KIT, "scripts", "ship.py")
 
-        def run(*a, path=None):
-            env = dict(os.environ, CLAUDE_PROJECT_DIR=repo, PATH=(path or bin_dir) + os.pathsep + "/usr/bin:/bin")
+        def run(*a, path=None, bare=False):
+            env = dict(os.environ, CLAUDE_PROJECT_DIR=repo, PATH=(path or bin_dir) + ("" if bare else os.pathsep + "/usr/bin:/bin"))
             return subprocess.run([sys.executable, script, *a], capture_output=True, text=True, cwd=repo, env=env)
 
         def set_ship(**cfg):
@@ -449,7 +449,11 @@ def ship():
         assert not os.path.exists(log), "off: no tool is called"
         # On, auto picks gh for github.com; a missing gh is named, never a crash.
         set_ship(enabled=True)
-        p = run("ABC-12", path=os.path.join(base, "empty"))
+        # A PATH with git only: a runner may have a real gh in /usr/bin.
+        only_git = os.path.join(base, "only-git")
+        os.makedirs(only_git)
+        os.symlink(shutil.which("git"), os.path.join(only_git, "git"))
+        p = run("ABC-12", path=only_git, bare=True)
         assert p.returncode == 1 and "gh is not installed" in p.stderr, p.stderr
         tool("gh", 'case "$1" in auth) exit 1;; esac')
         p = run("ABC-12")
