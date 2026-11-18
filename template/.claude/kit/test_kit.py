@@ -246,6 +246,7 @@ def main():
     attention_hooks()
     attention_server()
     wiring()
+    hooks_via_main()
     closing_status()
     fix_round_status()
     partial_rerun_status()
@@ -905,6 +906,42 @@ def wiring():
         assert open(path).read() == once, "a second install changed settings.json"
     finally:
         shutil.rmtree(d)
+
+
+def hooks_via_main():
+    """From a linked worktree the hooks run the main checkout's copy of a script (a worktree on an
+    older branch ran old hooks); outside git, or when the main checkout lacks it, the project's own
+    copy runs; an old-form entry is upgraded in place, never duplicated."""
+    import importlib.util
+    spec = importlib.util.spec_from_file_location("wire_hooks_vm", WIRE)
+    w = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(w)
+    base = os.path.realpath(tempfile.mkdtemp())
+    try:
+        main_repo, wt, plain = os.path.join(base, "main"), os.path.join(base, "wt"), os.path.join(base, "plain")
+        for d in (main_repo, plain):
+            os.makedirs(os.path.join(d, ".claude", "kit", "hooks"))
+        open(os.path.join(main_repo, ".claude", "kit", "hooks", "flow.py"), "w").write("import os\nprint('MAIN', os.environ['CLAUDE_PROJECT_DIR'])\n")
+        open(os.path.join(plain, ".claude", "kit", "hooks", "flow.py"), "w").write("print('OWN')\n")
+        g = lambda *a: subprocess.run(["git", "-C", main_repo, "-c", "user.name=t", "-c", "user.email=t@t", *a], check=True, capture_output=True)
+        g("init", "-q"); g("add", "-A"); g("commit", "-qm", "init"); g("worktree", "add", "-q", wt)
+        open(os.path.join(wt, ".claude", "kit", "hooks", "flow.py"), "w").write("print('WORKTREE')\n")
+        run = lambda proj: subprocess.run(["bash", "-c", w.FLOW], env={**os.environ, "CLAUDE_PROJECT_DIR": proj},
+                                          capture_output=True, text=True).stdout.strip()
+        assert run(wt) == f"MAIN {wt}", f"a linked worktree runs the main checkout's copy, on its own project: {run(wt)!r}"
+        assert run(plain) == "OWN", "outside git, the project's own copy runs"
+        os.remove(os.path.join(main_repo, ".claude", "kit", "hooks", "flow.py"))
+        assert run(wt) == "WORKTREE", "the main checkout without the script: the worktree's own copy runs"
+        # An old-form entry (a plain path) is replaced by the new command, not duplicated.
+        path = os.path.join(base, "settings.json")
+        oldform = "python3 \"$CLAUDE_PROJECT_DIR/.claude/kit/hooks/attention.py\" hold"
+        open(path, "w").write(json.dumps({"hooks": {"PreToolUse": [{"matcher": "AskUserQuestion", "hooks": [
+            {"type": "command", "command": oldform, "timeout": 600}]}]}}))
+        subprocess.run([sys.executable, WIRE, path], check=True)
+        got = [h["command"] for x in json.load(open(path))["hooks"]["PreToolUse"] if x.get("matcher") == "AskUserQuestion" for h in x["hooks"]]
+        assert got == [w.HOLD], f"the old-form hold is upgraded in place: {got}"
+    finally:
+        shutil.rmtree(base)
 
 
 def load_dashboard(name):

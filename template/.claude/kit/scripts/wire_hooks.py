@@ -13,12 +13,29 @@ import os
 import re
 import sys
 
-FLOW = "python3 \"$CLAUDE_PROJECT_DIR/.claude/kit/hooks/flow.py\""
-HOLD = "python3 \"$CLAUDE_PROJECT_DIR/.claude/kit/hooks/attention.py\" hold"
+def via_main(rel, arg=""):
+    """The command that runs the main checkout's copy of a kit script. Each worktree used to run
+    its own copy, so a worktree on an older branch ran old hooks (held turns, statuses that did not
+    match the page). The main checkout is used only for a real linked worktree: its git dir differs
+    from the common dir, the common dir is named .git, the project is the worktree's top level, and
+    the main checkout holds the same script at the same relative path; the probe runs without
+    GIT_DIR and GIT_WORK_TREE. Anything else (outside git, a project inside a git-tracked parent, a
+    bare repository, a submodule, git older than 2.31) runs the project's own copy. Only the code
+    comes from the main checkout: the hooks read CLAUDE_PROJECT_DIR for the worktree's own files."""
+    probe = ('K="$CLAUDE_PROJECT_DIR"; R="$(cd "$K" 2>/dev/null && pwd -P)"; '
+             'g() { env -u GIT_DIR -u GIT_WORK_TREE git -C "$K" rev-parse --path-format=absolute "$1" 2>/dev/null; }; '
+             'D="$(g --git-dir)"; C="$(g --git-common-dir)"; T="$(g --show-toplevel)"; M="${C%/.git}"; '
+             'if [ -n "$R" ] && [ "${D#/}" != "$D" ] && [ "${C#/}" != "$C" ] && [ "$D" != "$C" ] && [ "${C##*/}" = ".git" ] '
+             f'&& [ "$T" = "$R" ] && [ -f "$M/{rel}" ]; then K="$M"; fi; ')
+    return probe + f'python3 "$K/{rel}"' + (f" {arg}" if arg else "")
+
+
+FLOW = via_main(".claude/kit/hooks/flow.py")
+HOLD = via_main(".claude/kit/hooks/attention.py", "hold")
 # Permission dialogs and the main session's turn, answered from the page while it is open.
-PERMISSION = "python3 \"$CLAUDE_PROJECT_DIR/.claude/kit/hooks/attention.py\" permission"
-TURN = "python3 \"$CLAUDE_PROJECT_DIR/.claude/kit/hooks/attention.py\" turn"
-CLEANUP = "python3 \"$CLAUDE_PROJECT_DIR/.claude/kit/scripts/dashboard.py\" hook \"$CLAUDE_PROJECT_DIR\""
+PERMISSION = via_main(".claude/kit/hooks/attention.py", "permission")
+TURN = via_main(".claude/kit/hooks/attention.py", "turn")
+CLEANUP = via_main(".claude/kit/scripts/dashboard.py", 'hook "$CLAUDE_PROJECT_DIR"')
 # Scripts an older kit wired that no longer exist: their entries would fail on every event.
 GONE = ("cleanup.py",)
 
@@ -54,7 +71,9 @@ SCRIPT_RX = re.compile(r'/([\w-]+\.py)"?\s*(\S*)')
 
 def same_script(installed, wanted):
     """An older install may quote the path differently; the script and its first argument decide."""
-    got, want = SCRIPT_RX.search(installed.strip()), SCRIPT_RX.search(wanted.strip())
+    # The script is the one python3 runs last: the main-checkout probe names it once before.
+    tail = lambda c: c[c.rfind("python3 "):] if "python3 " in c else c
+    got, want = SCRIPT_RX.search(tail(installed.strip())), SCRIPT_RX.search(tail(wanted.strip()))
     return bool(got and want) and (got[1], got[2].strip()) == (want[1], want[2].strip())
 
 
