@@ -994,8 +994,14 @@ def partial_rerun_status():
         put("04-review-security.md", "Verdict: PASS\n\n## Findings\n- none\n", s0 + 10)
         put("04-review-qa.md", "Verdict: PASS\n\n## Findings\n- none\n", s0 + 10)
         put("04-review-product.md", finding, s0 + 10)
+        put("04-review-security.md", "Verdict: PASS\n\n## Not applicable\nNo input crosses a trust boundary.\n", s0 + 10)
         st = d.stages(flow, tdir)
         by = {x["file"]: x for x in st}
+        assert by["04-review-security.md"]["na"] and not by["04-review-qa.md"]["na"], "a Not applicable section is said"
+        put("04-review-product.md", "Verdict: FAIL\n\n## Not applicable\nx\n\n## Findings\n- [high] y\n", s0 + 10)
+        fail = {x["file"]: x for x in d.stages(flow, tdir)}["04-review-product.md"]
+        assert not fail["na"] and not fail["settled"], f"a FAIL is never not applicable nor settled: {fail}"
+        put("04-review-product.md", finding, s0 + 10)
         assert by["04-review-qa.md"]["settled"] and by["04-review-security.md"]["settled"] \
             and not by["04-review-product.md"]["settled"] and not by["04-review-contract.md"]["settled"], \
             f"settled: the lenses with no finding, never the contract reviewer, PASS as it is: {st}"

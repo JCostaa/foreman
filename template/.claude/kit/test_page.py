@@ -199,6 +199,14 @@ def tree(page):
     assert "fs.map(findingRow)" in tr, "findings sit under their review"
     assert "openNodes.has(s.file)" in tr and "d.files[s.file]" in tr, "a step's file opens under it"
 
+def not_applicable(page):
+    """A PASS with a "## Not applicable" section (dashboard.py "na") reads as such on its lens."""
+    code = script(page)
+    assert '${s.na ? t("verdict.na") : v ? esc(verdictName(v))' in code, "a not applicable lens reads as a plain approval"
+    d = dictionary(page)
+    assert all("verdict.na" in d[l] for l in LANGS)
+
+
 def switches_on_page(page):
     """The worktree's switches are on the page; turning one on or off asks first (with the risk
     when turning on) and posts with the token only from the confirmation."""
@@ -245,7 +253,7 @@ def preferences(page):
     assert 'new EventSource("api/events?t=" + encodeURIComponent(TOKEN))' in page and "startPoll()" in page, "live stream with a poll fallback"
 
 
-CHECKS = (both_languages, every_word_translated, whole_commands, answers_from_the_page, office, findings_panel, now_panel, tree, switches_on_page,
+CHECKS = (not_applicable, both_languages, every_word_translated, whole_commands, answers_from_the_page, office, findings_panel, now_panel, tree, switches_on_page,
           noise_collapsed, cleanup_wiring, preferences)
 
 
@@ -284,6 +292,7 @@ MUTATIONS = (
     (preferences, "theme outside try", lambda p: p.replace('try { theme = ["light", "dark", "system"].includes(localStorage.getItem(THEME_KEY)) ? localStorage.getItem(THEME_KEY) : "dark" } catch (e) {}', 'theme = localStorage.getItem(THEME_KEY);')),
     (findings_panel, "decided on the first click", lambda p: p.replace('  const decide = (b, key, decision) => {\n', '  const decide = (b, key, decision) => {\n    post("api/findings-decision", { wt: sel.wt, id: d.id, key, decision });\n')),
     (findings_panel, "dismissed alerts not restorable", lambda p: p.replace("dismissed.delete(b.dataset.restore)", "dismissed.add(b.dataset.restore)")),
+    (not_applicable, "na ignored", lambda p: p.replace("${s.na ? t(\"verdict.na\") : v ?", "${v ?")),
     (preferences, "no live stream", lambda p: p.replace('new EventSource("api/events?t=" + encodeURIComponent(TOKEN))', 'new EventSource("api/events")')),
 )
 

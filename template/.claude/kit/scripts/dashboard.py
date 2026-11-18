@@ -241,13 +241,15 @@ def agents(evs, now):
     return sorted(lanes.values(), key=lambda a: a["seen"], reverse=True)
 
 
+NOT_APPLICABLE_RX = re.compile(r"^##\s+Not applicable\s*$", re.M | re.I)
 # The contract reviewer re-runs every fix round; the other lenses only when their last review had
 # findings.
 ALWAYS_RERUN = "reviewer"
 
 
 def stages(flow, tdir):
-    """Each stage of flow.json with its file state; a review also says whether it needs no re-run
+    """Each stage of flow.json with its file state; a review also says whether it is "not
+    applicable" (a PASS with a `## Not applicable` section; a FAIL stays a FAIL) and whether it needs no re-run
     in a fix round (`settled`: a lens other than the contract reviewer whose last review is a PASS,
     so it had no finding to fix)."""
     out = []
@@ -260,6 +262,7 @@ def stages(flow, tdir):
         out.append({"agent": agent, "file": st.get("file"), "written": text is not None,
                     "needs_verdict": review, "verdict": verdict, "status": None if review else word,
                     "open": len(MARKER_RX.findall(text or "")),
+                    "na": review and verdict == "PASS" and bool(text and NOT_APPLICABLE_RX.search(text)),
                     "settled": review and agent != ALWAYS_RERUN and verdict == "PASS"})
     return out
 

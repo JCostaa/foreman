@@ -110,6 +110,12 @@ the findings and their state, and the dev decides each one from the page. `impor
 high and `minor` as low; `Severity: x` and `**Medium**` are read too, and a finding without a
 severity shows as `unknown`.
 
+A lens with nothing to review in this task writes `Verdict: PASS` and a `## Not applicable`
+section saying why; the dashboard shows it as "not applicable" (a FAIL with that section stays a
+FAIL), not as a plain approval. A fix round re-runs the contract reviewer and the lenses whose last
+review had findings: a lens whose last review was a PASS is not required again, so its file being
+older than the round does not hold the task before its reviews.
+
 After `max_fix_rounds` rounds of the executor (default 3) the open findings go to the dev.
 
 ## Closing a task

@@ -418,6 +418,7 @@ const I18N = /* i18n:begin */{
   "verdict.DONE_WITH_CONCERNS": "done with concerns",
   "verdict.NEEDS_CONTEXT": "needs context",
   "verdict.BLOCKED": "blocked",
+  "verdict.na": "not applicable",
   "ev.start": "started",
   "ev.stop": "finished",
   "ev.tool": "tool call",
@@ -778,6 +779,7 @@ const I18N = /* i18n:begin */{
   "verdict.DONE_WITH_CONCERNS": "concluído com ressalvas",
   "verdict.NEEDS_CONTEXT": "precisa de contexto",
   "verdict.BLOCKED": "travado",
+  "verdict.na": "não se aplica",
   "ev.start": "começou",
   "ev.stop": "terminou",
   "ev.tool": "ferramenta",
@@ -1453,7 +1455,7 @@ function showTree(d, list, now) {
       const lane = lanes[s.agent], v = s.verdict;
       const vc = v === "FAIL" ? "bad" : v === "PASS_WITH_FINDINGS" ? "warn" : v ? "ok" : lane && lane.state === "running" ? "run" : "todo";
       const fs = (d.findings || []).filter(x => x.lens === lensOf(s));
-      return `<li class="node ${vc}"><div class="row" data-node="${esc(s.file)}">${robot(s.agent, v === "FAIL" ? "failed" : v ? "ok" : lane ? lane.state : "idle", 22)}<b>${esc(roleName(s.agent))}</b><span class="meta">${v ? esc(verdictName(v)) : lane ? t("lane.state." + (lane.state || "idle")) : t("tree.waiting")}</span>${fs.length ? `<span class="count">${fs.length}</span>` : ""}</div>${fileOf(s)}${fs.length ? `<div class="kids">${fs.map(findingRow).join("")}</div>` : ""}</li>`;
+      return `<li class="node ${vc}"><div class="row" data-node="${esc(s.file)}">${robot(s.agent, v === "FAIL" ? "failed" : v ? "ok" : lane ? lane.state : "idle", 22)}<b>${esc(roleName(s.agent))}</b><span class="meta">${s.na ? t("verdict.na") : v ? esc(verdictName(v)) : lane ? t("lane.state." + (lane.state || "idle")) : t("tree.waiting")}</span>${fs.length ? `<span class="count">${fs.length}</span>` : ""}</div>${fileOf(s)}${fs.length ? `<div class="kids">${fs.map(findingRow).join("")}</div>` : ""}</li>`;
     }).join("")}</ul>`;
     if (st.key === "decision") {
       const c = d.findings_counts || {};
