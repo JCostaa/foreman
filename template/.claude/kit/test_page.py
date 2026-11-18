@@ -207,6 +207,21 @@ def not_applicable(page):
     assert all("verdict.na" in d[l] for l in LANGS)
 
 
+def released_holds(page):
+    """A question or turn whose hold let go says why and when, and the way out: a question keeps its
+    options pickable and lists what to choose in the terminal; a turn gets a text box and Copy."""
+    code = script(page)
+    body = code[code.index("function alertBody"):code.index("const goneAlerts")]
+    assert body.count("goneHTML(a, n)") == 2, "both a question and a turn show why their hold let go"
+    assert '${a.held || a.released ? "" : " disabled"}' in body, "a released question's options stay pickable"
+    gone = code[code.index("function goneHTML"):code.index("function goneAnswer")]
+    assert 't("gone." + (has("gone." + a.released) ? a.released : "stopped")' in gone and "data-copy" in gone \
+        and "data-gone-picks" in gone, "why it let go, Copy for a turn, the picks for a question"
+    srv = server()
+    d = dictionary(page)
+    assert all(f"gone.{r}" in d[l] for r in srv.RELEASE_REASONS for l in LANGS), "every release reason is said"
+
+
 def switches_on_page(page):
     """The worktree's switches are on the page; turning one on or off asks first (with the risk
     when turning on) and posts with the token only from the confirmation."""
@@ -253,7 +268,7 @@ def preferences(page):
     assert 'new EventSource("api/events?t=" + encodeURIComponent(TOKEN))' in page and "startPoll()" in page, "live stream with a poll fallback"
 
 
-CHECKS = (not_applicable, both_languages, every_word_translated, whole_commands, answers_from_the_page, office, findings_panel, now_panel, tree, switches_on_page,
+CHECKS = (released_holds, not_applicable, both_languages, every_word_translated, whole_commands, answers_from_the_page, office, findings_panel, now_panel, tree, switches_on_page,
           noise_collapsed, cleanup_wiring, preferences)
 
 
@@ -292,6 +307,9 @@ MUTATIONS = (
     (preferences, "theme outside try", lambda p: p.replace('try { theme = ["light", "dark", "system"].includes(localStorage.getItem(THEME_KEY)) ? localStorage.getItem(THEME_KEY) : "dark" } catch (e) {}', 'theme = localStorage.getItem(THEME_KEY);')),
     (findings_panel, "decided on the first click", lambda p: p.replace('  const decide = (b, key, decision) => {\n', '  const decide = (b, key, decision) => {\n    post("api/findings-decision", { wt: sel.wt, id: d.id, key, decision });\n')),
     (findings_panel, "dismissed alerts not restorable", lambda p: p.replace("dismissed.delete(b.dataset.restore)", "dismissed.add(b.dataset.restore)")),
+    (released_holds, "released question disabled", lambda p: p.replace('${a.held || a.released ? "" : " disabled"}', '${a.held ? "" : " disabled"}')),
+    (released_holds, "released turn silent", lambda p: p.replace("    : a.released ? goneHTML(a, n)\n    : a.turns", "    : a.turns")),
+    (released_holds, "no copy for a turn", lambda p: p.replace("<button type=\"button\" data-copy data-gone-for=", "<button type=\"button\" data-gone-for=")),
     (not_applicable, "na ignored", lambda p: p.replace("${s.na ? t(\"verdict.na\") : v ?", "${v ?")),
     (preferences, "no live stream", lambda p: p.replace('new EventSource("api/events?t=" + encodeURIComponent(TOKEN))', 'new EventSource("api/events")')),
 )

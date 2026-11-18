@@ -261,6 +261,7 @@ def main():
     findings_decision_endpoint()
     decision_keys()
     page_holds()
+    turn_holds()
     language_hook()
     rooms_and_agents()
     switches()
@@ -2399,6 +2400,98 @@ def event_stream():
             server.server_close()
     finally:
         shutil.rmtree(base)
+
+
+def turn_holds():
+    """One classifier (flow.asks) decides whether a turn asks. Only a turn that asks is held, never
+    one whose session has a subagent running (a fresh .running marker; a stale one is ignored), and
+    a held turn lets go when a subagent starts. A hold that lets go records why and when. Every tool
+    call of a subagent refreshes its marker."""
+    sys.path.insert(0, os.path.join(KIT, "hooks"))
+    import flow as F
+    assert F.asks("Contract written. Go on?") and F.asks("Pick one and let me know.") and F.asks("Responda aqui")
+    assert not F.asks("Executor launched; waiting for it to finish.")
+    assert not F.asks("Is this right? " + "x" * 700), "only the last 600 characters count"
+    root = kit_root()
+    try:
+        adir = os.path.join(root, ".work", "attention")
+        os.makedirs(adir)
+        page = os.path.join(adir, ".page")
+        open(os.path.join(adir, "turns-on"), "w").close()
+        env = dict(os.environ, CLAUDE_PROJECT_DIR=root, KIT_ATTENTION_PID=str(os.getpid()), KIT_ATTENTION_POLL="0.1",
+                   KIT_ATTENTION_HOLD="20")
+        alert = lambda sid: json.load(open(os.path.join(adir, sid, "main.json")))
+
+        def quick(sid, text):
+            open(page, "w").close()
+            t0 = time.monotonic()
+            p = subprocess.run([sys.executable, ATTN, "turn"], input=json.dumps(
+                {"hook_event_name": "Stop", "session_id": sid, "last_assistant_message": text}),
+                capture_output=True, text=True, env=env)
+            return p.stdout, time.monotonic() - t0
+
+        out, took = quick("i1", "Executor launched; waiting for it to finish.")
+        a = alert("i1")
+        assert out == "" and took < 5 and a["held"] is False and a["kind"] == "turn" and "released" not in a, \
+            f"a turn that asks nothing is not held, its alert still raised: {a}"
+        marker = os.path.join(adir, "i2", ".running", "agent-x")
+        os.makedirs(os.path.dirname(marker))
+        open(marker, "w").close()
+        out, took = quick("i2", "Contract written. Go on?")
+        assert out == "" and took < 5 and alert("i2")["held"] is False, "never held while a subagent of the session runs"
+        old = time.time() - 20 * 60
+        os.utime(marker, (old, old))
+        # A subagent's tool call refreshes its marker; the main session's does not create one.
+        p = subprocess.run([sys.executable, HOOK], input=json.dumps(
+            {"hook_event_name": "PostToolUse", "session_id": "i2", "agent_id": "agent-x", "tool_name": "Read"}),
+            capture_output=True, text=True, env=env)
+        assert time.time() - os.path.getmtime(marker) < 60, "a subagent's tool call keeps its marker fresh"
+        os.utime(marker, (old, old))
+
+        proc = subprocess.Popen([sys.executable, ATTN, "turn"], stdin=subprocess.PIPE, stdout=subprocess.PIPE,
+                                stderr=subprocess.PIPE, text=True, env=env)
+        open(page, "w").close()
+        proc.stdin.write(json.dumps({"hook_event_name": "Stop", "session_id": "i2", "last_assistant_message": "Go on?"}))
+        proc.stdin.close()
+        for _ in range(100):
+            if os.path.exists(os.path.join(adir, "i2", "main.json")) and alert("i2").get("held"):
+                break
+            os.utime(page)
+            time.sleep(0.05)
+        assert alert("i2")["held"], "a stale marker (a killed subagent) does not stop the hold"
+        os.utime(marker)  # a subagent of the session starts working
+        proc.wait(10)
+        a = alert("i2")
+        assert proc.stdout.read() == "" and a["held"] is False and a["released"] == "agent-running" \
+            and isinstance(a.get("released_at"), float), f"a held turn lets go when a subagent starts, and says why: {a}"
+
+        # A question released from the page says so.
+        open(os.path.join(adir, "answers-on"), "w").close()
+        proc = subprocess.Popen([sys.executable, ATTN, "hold"], stdin=subprocess.PIPE, stdout=subprocess.PIPE,
+                                stderr=subprocess.PIPE, text=True, env=env)
+        open(page, "w").close()
+        proc.stdin.write(json.dumps(ask("q1")))
+        proc.stdin.close()
+        path = os.path.join(adir, "q1", "main.json")
+        for _ in range(100):
+            if os.path.exists(path) and json.load(open(path)).get("held"):
+                break
+            os.utime(page)
+            time.sleep(0.05)
+        open(path[:-len(".json")] + ".release", "w").close()
+        proc.wait(10)
+        a = json.load(open(path))
+        assert a["held"] is False and a["released"] == "released" and a["released_at"], a
+        d = load_dashboard("dash_released")
+        got = {x["session"]: x for x in d.alerts(os.path.join(root, ".work"), time.time())}
+        assert got["q1"]["released"] == "released" and got["i2"]["released"] == "agent-running" \
+            and got["i1"]["released"] is None, "the server says why a hold let go, and nothing for one never held"
+        # A hold killed without a word (still marked held, heartbeat stale) reads "stopped".
+        json.dump({**{k: v for k, v in a.items() if k not in ("released", "released_at")}, "held": True,
+                   "heartbeat": time.time() - 60}, open(path, "w"))
+        assert {x["session"]: x for x in d.alerts(os.path.join(root, ".work"), time.time())}["q1"]["released"] == "stopped"
+    finally:
+        shutil.rmtree(root)
 
 
 def page_holds():

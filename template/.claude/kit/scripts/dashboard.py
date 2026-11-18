@@ -1069,8 +1069,30 @@ def alerts(wdir, now):
                     "held": held_now(a, now)}
             if a["kind"] == "question":
                 item.update(questions=a.get("questions") or [])
+            if a["kind"] in ("question", "turn"):
+                item.update(release_of(a, item["held"]))
             out.append(item)
     return out
+
+
+# Why a hold the page could answer no longer can: attention.py writes the reason when it lets go;
+# a hold killed or gone without writing it reads as "stopped" at its last heartbeat. None for a
+# question or turn that was never held (the dev answers in the terminal as always).
+RELEASE_REASONS = ("timeout", "page-gone", "switch-off", "released", "bad-answer", "agent-running", "stopped")
+
+
+def release_of(a, held):
+    if held:
+        return {"released": None, "released_at": None}
+    if a.get("released") is not None:
+        reason, at = a.get("released"), a.get("released_at")
+    elif a.get("held"):
+        # Still marked held, heartbeat stale: the hook was killed or its session went away.
+        reason, at = "stopped", a.get("heartbeat")
+    else:
+        return {"released": None, "released_at": None}
+    return {"released": reason if reason in RELEASE_REASONS else "stopped",
+            "released_at": at if isinstance(at, (int, float)) else None}
 
 
 def read_json(path):

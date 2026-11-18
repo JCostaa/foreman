@@ -555,7 +555,19 @@ const I18N = /* i18n:begin */{
   "switch.turn-on.answers": "Answer questions on this page",
   "switch.turn-on.turns": "Reply to the session on this page",
   "live.on": "live",
-  "live.off": "refreshing every 2 s"
+  "live.off": "refreshing every 2 s",
+  "gone.timeout": "The session stopped waiting for the page at {time}, after {n} minutes.",
+  "gone.page-gone": "The page was closed or hidden (no poll for 30 s), so the session stopped waiting for it at {time}.",
+  "gone.switch-off": "Answering on the page was turned off, so the session stopped waiting for the page at {time}.",
+  "gone.released": "You sent it to the terminal at {time}.",
+  "gone.bad-answer": "The page's answer did not match this question, so it went to the terminal at {time}.",
+  "gone.agent-running": "An agent of the session started working at {time}, so the session stopped waiting for the page and goes on by itself.",
+  "gone.stopped": "The session stopped waiting for the page at {time} (its hook ended without a word: killed, or the session closed).",
+  "gone.what.question": "What to do: pick the options here; the page lists them, and you choose the same ones in the terminal of session {session}. The page cannot answer it any more.",
+  "gone.what.turn": "What to do: write your message here, press \"Copy\" and paste it in the terminal of session {session}.",
+  "gone.answer": "Text to paste",
+  "gone.picks": "Choose these in the terminal: {picks}",
+  "gone.picks.none": "Pick the options above: what to choose in the terminal shows here."
  },
  "pt": {
   "lang.button": "PT / EN",
@@ -916,7 +928,19 @@ const I18N = /* i18n:begin */{
   "switch.turn-on.answers": "Responder perguntas por esta página",
   "switch.turn-on.turns": "Responder à sessão por esta página",
   "live.on": "ao vivo",
-  "live.off": "atualizando a cada 2 s"
+  "live.off": "atualizando a cada 2 s",
+  "gone.timeout": "A sessão parou de esperar a página às {time}, depois de {n} minutos.",
+  "gone.page-gone": "A página foi fechada ou ficou escondida (sem consulta por 30 s), então a sessão parou de esperar por ela às {time}.",
+  "gone.switch-off": "Responder pela página foi desligado, então a sessão parou de esperar a página às {time}.",
+  "gone.released": "Você mandou para o terminal às {time}.",
+  "gone.bad-answer": "A resposta da página não casou com esta pergunta, então ela foi para o terminal às {time}.",
+  "gone.agent-running": "Um agente da sessão começou a trabalhar às {time}, então a sessão parou de esperar a página e segue sozinha.",
+  "gone.stopped": "A sessão parou de esperar a página às {time} (o hook terminou sem aviso: foi encerrado, ou a sessão fechou).",
+  "gone.what.question": "O que fazer: escolha as opções aqui; a página lista o que escolher, e você escolhe as mesmas no terminal da sessão {session}. A página não responde mais esta pergunta.",
+  "gone.what.turn": "O que fazer: escreva a mensagem aqui, aperte \"Copiar\" e cole no terminal da sessão {session}.",
+  "gone.answer": "Texto para colar",
+  "gone.picks": "Escolha estas no terminal: {picks}",
+  "gone.picks.none": "Escolha as opções acima: o que escolher no terminal aparece aqui."
  }
 }/* i18n:end */;
 // Statuses dashboard.py returns by name; any other status is the agent of the last stage written.
@@ -1222,9 +1246,10 @@ function showTodo(groups) {
 function alertBody(a, n) {
   if (a.kind === "question") {
     const qs = (a.questions || []).map((qq, i) => `<div class="q">${esc(qq.header ? qq.header + ": " : "")}${esc(qq.question)}</div>` +
-      qq.options.map((o, j) => `<label><input type="${qq.multiSelect ? "checkbox" : "radio"}" name="a${n}q${i}" value="${j}"${a.held ? "" : " disabled"}> ${esc(o.label)} <span class="opt-d">${esc(o.description)}</span></label>`).join("") +
-      (a.held ? `<label>${qq.multiSelect ? "" : `<input type="radio" name="a${n}q${i}" value="other"> `}${t("alert.other")} <input type="text" data-other="${i}" style="width:min(420px,100%)"></label>` : "")).join("");
+      qq.options.map((o, j) => `<label><input type="${qq.multiSelect ? "checkbox" : "radio"}" name="a${n}q${i}" value="${j}"${a.held || a.released ? "" : " disabled"}> ${esc(o.label)} <span class="opt-d">${esc(o.description)}</span></label>`).join("") +
+      (a.held || a.released ? `<label>${qq.multiSelect ? "" : `<input type="radio" name="a${n}q${i}" value="other"> `}${t("alert.other")} <input type="text" data-other="${i}" style="width:min(420px,100%)"></label>` : "")).join("");
     const foot = a.held ? `<div class="actions"><button class="primary" data-send="${n}">${t("alert.send")}</button><button data-release="${n}">${t("alert.release")}</button></div>`
+      : a.released ? goneHTML(a, n)
       : a.answers ? `<div class="meta">${t("alert.notheld")}</div>`
       : `<div class="meta">${t("alert.off", { wt: a.wtName, cmd: "" })}</div><div class="actions"><button class="primary" data-switch="answers" data-wt="${a.wt}" data-on="1">${t("switch.turn-on.answers")}</button></div>${cmdBlock(a.command || `cd ${q(a.path || ".")} && bash .claude/kit/scripts/work.sh ui answers on`)}`;
     return qs + foot;
@@ -1235,9 +1260,50 @@ function alertBody(a, n) {
       (a.held ? `<div class="actions"><button class="primary" data-allow="${n}">${t("perm.allow")}</button><button class="danger" data-deny="${n}">${t("perm.deny")}</button><button data-release="${n}">${t("alert.release")}</button></div>` : "");
   return `<div class="meta">${esc(a.detail).slice(0, 600)}</div>` + (a.held
     ? `<textarea rows="3" data-msg="${n}" placeholder="${esc(t("turn.placeholder"))}" style="margin-top:6px"></textarea><div class="actions"><button class="primary" data-reply="${n}">${t("turn.send")}</button><button data-release="${n}">${t("alert.release")}</button></div>`
+    : a.released ? goneHTML(a, n)
     : a.turns ? `<div class="action">${t("action.prompt-session", { wt: a.wtName })}</div>`
     : `<div class="action">${t("turn.off", { wt: a.wtName })}</div><div class="actions"><button class="primary" data-switch="turns" data-wt="${a.wt}" data-on="1">${t("switch.turn-on.turns")}</button></div>${cmdBlock(`cd ${q(a.path || ".")} && bash .claude/kit/scripts/work.sh ui turns on`)}`);
 }
+// A question or turn whose hold let go (released, with when and why, from the server): the page
+// cannot answer it any more, so the card says why and gives the way out. A turn's text is pasted
+// into the prompt (Copy); a question's picks are chosen in the terminal's picker, which takes no
+// pasted text, so the page lists them instead.
+const goneAlerts = new Map();
+const hhmm = (sec) => new Date(sec * 1000).toLocaleTimeString(lang === "pt" ? "pt-BR" : "en", { hour: "2-digit", minute: "2-digit" });
+function goneHTML(a, n) {
+  const at = typeof a.released_at === "number" ? a.released_at : a.since;
+  const why = t("gone." + (has("gone." + a.released) ? a.released : "stopped"), { time: hhmm(at), n: Math.max(0, Math.round((at - a.since) / 60)) });
+  const session = String(a.session || ""), gk = akey(a);
+  goneAlerts.set(gk, a);
+  const out = a.kind === "turn"
+    ? `<textarea rows="3" maxlength="4000" data-gone-text placeholder="${esc(t("turn.placeholder"))}"></textarea><div class="cmd"><span class="k">${t("gone.answer")}</span><code data-gone-answer></code><button type="button" data-copy data-gone-for="${esc(gk)}">${t("copy")}</button></div>`
+    : `<div class="picks meta" data-gone-picks="${esc(gk)}" data-n="${n}">${t("gone.picks.none")}</div>`;
+  return `<div class="gone" data-gone="${esc(a.released)}"><div class="warn">${why}</div><div class="action">${t("gone.what." + (a.kind === "turn" ? "turn" : "question"), { session: session.slice(0, 8) })}</div>${out}</div>`;
+}
+// What to choose in the terminal: "1. Light; 2. A, B" for a question (a multi-select's picks
+// joined by commas, "Other" as typed), the message itself for a turn.
+function goneAnswer(card, a, n) {
+  if (a.kind === "turn") return (card.querySelector("[data-gone-text]") || {}).value || "";
+  return (a.questions || []).map((qq, i) => {
+    const picked = [...card.querySelectorAll(`input[name="a${n}q${i}"]:checked`)].map(x => x.value === "other"
+      ? ((card.querySelector(`[data-other="${i}"]`) || {}).value || "").trim() : (qq.options[+x.value] || {}).label).filter(Boolean);
+    const other = qq.multiSelect ? ((card.querySelector(`[data-other="${i}"]`) || {}).value || "").trim() : "";
+    return `${i + 1}. ${[...picked, ...(other ? [other] : [])].join(", ")}`;
+  }).join("; ");
+}
+document.addEventListener("input", (ev) => {
+  const card = ev.target.closest && ev.target.closest(".alert, .pop"), box = card && card.querySelector("[data-gone-picks]");
+  if (!box) return;
+  const a = goneAlerts.get(box.dataset.gonePicks), picks = a ? goneAnswer(card, a, +box.dataset.n) : "";
+  box.innerHTML = /\d\. \S/.test(picks) ? t("gone.picks", { picks }) : t("gone.picks.none");
+});
+// Fills the text to paste before the copy handler reads it (the capture phase runs first).
+document.addEventListener("click", (ev) => {
+  const b = ev.target.closest && ev.target.closest("[data-gone-for]");
+  if (!b) return;
+  const card = b.closest(".alert, .pop"), a = goneAlerts.get(b.dataset.goneFor), code = card && card.querySelector("[data-gone-answer]");
+  if (a && code) code.textContent = goneAnswer(card, a, 0);
+}, true);
 // Alerts the dev dismissed, per viewer: an alert is a session waiting, and it comes back as a new
 // one when that session waits again.
 const DISMISS_KEY = "agent-flow-dismissed";
@@ -1261,7 +1327,7 @@ function showAttention() {
       new Notification(`${a.wtName}: ${t("kind." + a.kind)}`, { body: a.tool || "", tag: key(a) });
   });
   // Re-rendered only when the set changes, so a half-written answer survives the refresh.
-  const sig = JSON.stringify([lang, all.map(a => [key(a), a.held, a.qid, a.answers, a.turns]), hidden.length]);
+  const sig = JSON.stringify([lang, all.map(a => [key(a), a.held, a.released, a.qid, a.answers, a.turns]), hidden.length]);
   if (sig === attnSig) return;
   attnSig = sig;
   $("attn").innerHTML = all.map((a, n) => {
