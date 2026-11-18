@@ -131,7 +131,15 @@ EOF
         port=$(python3 -c 'import socket,sys
 for p in range(8787, 8800):
     s = socket.socket()
+    # As the server binds (allow_reuse_address): a port left in TIME_WAIT by the last page is
+    # free. On macOS that bind also succeeds next to a listener on 0.0.0.0, so a port that accepts
+    # a connection is busy; checked before the bind, which would take the connection to itself.
+    s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
     try:
+        c = socket.socket(); c.settimeout(0.3)
+        busy = c.connect_ex(("127.0.0.1", p)) == 0; c.close()
+        if busy:
+            continue
         s.bind(("127.0.0.1", p)); print(p); sys.exit(0)
     except OSError:
         pass
