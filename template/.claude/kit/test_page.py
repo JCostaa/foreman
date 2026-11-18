@@ -158,7 +158,15 @@ def office(page):
     assert "String(pick(agentCfg(a).label) || a)" in code, "an agent the dev added shows its own label"
     assert "const alert = g && g.alerts.find(a => a.agent === lane.agent" in code, "a hand belongs to the agent that raised the alert"
     assert "hand ? '<span class=\"bubble hand\"" in code, "an agent waiting on the dev raises its hand"
-    assert "alertBody(hand.alert, 0)" in code and "wireAlerts(pop, [hand.alert])" in code, "the request is answered from the robot"
+    assert 'alertBody(hand.alert, 0, "p")' in code and 'wireAlerts(pop, [hand.alert], "p")' in code, "the request is answered from the robot"
+    # The same question shows in more than one box: radios group by name across the page, so each
+    # box names its own, or checking one unchecks the other.
+    assert 'name="${p}a${n}q${i}" value="${j}"' in code and 'input[name="${p}a${n}q${i}"]:checked' in code, "radio names per box"
+    # The robot's card is redrawn only when its content changes: its clocks are filled after, or a
+    # redraw every tick wipes what the dev was marking.
+    pop = code[code.index("function showPop"):code.index("function purposeText")]
+    drawn = pop[pop.index("let html ="):pop.index("if (pop.dataset.html !== html)")]
+    assert "<span data-when></span>" in drawn and "ago(" not in drawn and "when ?" not in drawn, "no clock in the redraw check"
     assert "const here = stepRoom(list[now]);" in code, "the task stands in the room of its current step"
     assert all(k in d["pt"] for k in ("office.hand", "pop.blocked", "pop.idle"))
     assert 'const away = r !== "main" && !lane && !(st && st.written);' in code, "an agent not started waits in the break room"
@@ -192,7 +200,7 @@ def now_panel(page):
     code = script(page)
     n = code[code.index("function showNow"):code.index("const LENS_ROLE")]
     assert 't(act ? "now.act" : "now.wait")' in n and "const act = items.length > 0;" in n
-    assert "alertBody(a, n)" in n and "wireAlerts($(\"now\"), alerts)" in n, "the task's alerts are answered in Now"
+    assert 'alertBody(a, n, "n")' in n and 'wireAlerts($("now"), alerts, "n")' in n, "the task's alerts are answered in Now"
     assert "open.map(findingRow)" in n and "wireFindings($(\"now\"), d)" in n, "open findings are decided in Now"
     assert 'l.state === "running" && l.type !== "main"' in n, "WAIT says which agents work"
     assert "!(sel && g.wt === sel.wt)" in code, "the waiting block keeps to the other tasks"
@@ -229,7 +237,7 @@ def noise_collapsed(page):
     pop = code[code.index("function showPop"):code.index("function purposeText")]
     inner = pop[pop.index("<details><summary>"):]
     inner = inner[:inner.index("</details>")]
-    assert 't("lane.id"' in inner and "lane.last" in inner, "the agent id and last tool call stay in the robot's <details>"
+    assert "data-laneid" in inner and "lane.last" in inner, "the agent id and last tool call stay in the robot's <details>"
 
 
 def cleanup_wiring(page):
@@ -280,6 +288,8 @@ MUTATIONS = (
     (answers_from_the_page, "no deny", lambda p: p.replace('{ behavior: "deny" }', '{ behavior: "allow" }')),
     (answers_from_the_page, "allow on a permission not held", lambda p: p.replace('(a.held ? `<div class="actions"><button class="primary" data-allow=', '(true ? `<div class="actions"><button class="primary" data-allow=')),
     (answers_from_the_page, "no token", lambda p: p.replace('"X-Kit-Token": TOKEN }, body: JSON.stringify(body) })', '}, body: JSON.stringify(body) })')),
+    (office, "one radio name for every box", lambda p: p.replace('name="${p}a${n}q${i}" value="${j}"', 'name="a${n}q${i}" value="${j}"')),
+    (office, "clock redraws the card", lambda p: p.replace('<span data-when></span>', '${when ? " · " + when : ""}')),
     (office, "no hand", lambda p: p.replace("hand ? '<span class=\"bubble hand\"", "false ? '<span class=\"bubble hand\"")),
     (now_panel, "always WAIT", lambda p: p.replace('t(act ? "now.act" : "now.wait")', 't("now.wait")')),
     (now_panel, "findings not in Now", lambda p: p.replace("open.map(findingRow)", "[].map(findingRow)")),

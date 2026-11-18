@@ -229,14 +229,14 @@
   /* The office fills the window: no page scroll, the map takes every pixel left, the chat sits
      under it and the side panel scrolls on its own. A narrow window scrolls as before. */
   @media (min-width: 1101px) {
-    html, body { height:100% } body { overflow:hidden }
+    html, body { height:100% } html { background:var(--bg) } body { overflow:hidden }
     .app { height:100vh; display:flex; flex-direction:column }
     main { flex:1; min-height:0; padding:10px 16px 12px; display:flex; flex-direction:column }
-    .desk { flex:1; min-height:0; margin-top:0; align-items:stretch }
+    .desk { flex:1; min-height:0; margin-top:0; align-items:stretch; grid-template-rows:minmax(0,1fr) }
     .center, #plan, .stage { display:flex; flex-direction:column; min-height:0 } .center { height:100% } #plan, .stage { flex:1 }
     .worldbox { flex:1; height:auto; min-height:0 }
     .world-hint { white-space:nowrap; overflow:hidden; text-overflow:ellipsis; margin:6px 2px 0 }
-    .dock { margin-top:8px; padding:8px 12px } .dock .said { max-height:90px } .dock-row { margin-top:6px } .dock-row textarea { min-height:40px }
+    .dock { margin-top:8px; padding:8px 12px } .dock .said { max-height:34vh; resize:vertical } .dock-row { margin-top:6px } .dock-row textarea { min-height:40px }
     .side { position:static; height:100%; max-height:none }
   }
   @media (max-width: 1100px) { .desk { grid-template-columns:1fr } }
@@ -659,6 +659,12 @@ const I18N = /* i18n:begin */{
   "chat.queue": "Send when it finishes",
   "chat.cmd": "Make the command",
   "chat.queued": "Queued: it goes as soon as the session finishes its turn.",
+  "chat.unqueue": "Cancel",
+  "chat.state.idle": "waits in its terminal",
+  "chat.state.fresh": "new session: waits in its terminal",
+  "chat.fresh": "This session was just opened and has not taken a message yet: Claude Code only reads its first message from the terminal. Paste this there; from its first answer on, the chat reaches it:",
+  "chat.term": "Take it to the terminal",
+  "chat.idle": "The session is stopped at its prompt and the page's hold on it is over, so a message from here cannot reach it. Paste this in its terminal; from its next stop on, the page holds the turn again:",
   "chat.sent": "Sent to the session.",
   "chat.none": "No Claude session is open here, and the page cannot open one. Run this in a terminal:",
   "pick.none": "No task",
@@ -1055,6 +1061,12 @@ const I18N = /* i18n:begin */{
   "chat.queue": "Enviar quando terminar",
   "chat.cmd": "Gerar o comando",
   "chat.queued": "Na fila: vai assim que a sessão terminar a vez dela.",
+  "chat.unqueue": "Cancelar",
+  "chat.state.idle": "espera no terminal",
+  "chat.state.fresh": "sessão nova: espera no terminal",
+  "chat.fresh": "Esta sessão acabou de abrir e ainda não recebeu nenhuma mensagem: o Claude Code só lê a primeira pelo terminal. Cole isto lá; a partir da primeira resposta, o chat alcança a sessão:",
+  "chat.term": "Levar ao terminal",
+  "chat.idle": "A sessão está parada no prompt e a página não a segura mais, então uma mensagem daqui não chega nela. Cole isto no terminal dela; a partir da próxima parada a página volta a segurar a vez:",
   "chat.sent": "Enviado para a sessão.",
   "chat.none": "Nenhuma sessão do Claude está aberta aqui, e a página não consegue abrir uma. Rode isto num terminal:",
   "pick.none": "Nenhuma tarefa",
@@ -1376,7 +1388,7 @@ function showTodo(groups) {
   setHTML($("todo"), items.join(""));
   $("todo").querySelectorAll("[data-go]").forEach(b => b.onclick = () => select(+b.dataset.go, b.dataset.id));
   if ($("clean-all")) $("clean-all").onclick = () => openCleanup("all=done", true);
-  const waiting = attention.some(g => g.alerts.some(a => !(sel && g.wt === sel.wt))) || items.length;
+  const waiting = attention.some(g => g.alerts.some(a => !(sel && g.wt === sel.wt) && !inChat(a, g.wt))) || items.length;
   $("waiting-title").innerHTML = t(sel ? "waiting.elsewhere" : "waiting.title");
   $("waiting").hidden = !waiting;
   setHTML($("legend"), (waiting ? "" : t("waiting.none") + " ") + `<details><summary>${t("legend.more")}</summary>${t("legend.text")}</details>`);
@@ -1384,11 +1396,13 @@ function showTodo(groups) {
 
 // An alert answered where it shows: a question, a permission or a session's turn, while the hook
 // holds it for the page. Not held, it says where to answer and, when there is one, the command.
-function alertBody(a, n) {
+// p: the box the alert is drawn in. Radios group by name across the whole page, so the same
+// question in two boxes needs two names, or checking one unchecks the other.
+function alertBody(a, n, p = "") {
   if (a.kind === "question") {
     const qs = (a.questions || []).map((qq, i) => `<div class="q">${esc(qq.header ? qq.header + ": " : "")}${esc(qq.question)}</div>` +
-      qq.options.map((o, j) => `<label><input type="${qq.multiSelect ? "checkbox" : "radio"}" name="a${n}q${i}" value="${j}"${a.held ? "" : " disabled"}> ${esc(o.label)} <span class="opt-d">${esc(o.description)}</span></label>`).join("") +
-      (a.held ? `<label>${qq.multiSelect ? "" : `<input type="radio" name="a${n}q${i}" value="other"> `}${t("alert.other")} <input type="text" data-other="${i}" style="width:min(420px,100%)"></label>` : "")).join("");
+      qq.options.map((o, j) => `<label><input type="${qq.multiSelect ? "checkbox" : "radio"}" name="${p}a${n}q${i}" value="${j}"${a.held ? "" : " disabled"}> ${esc(o.label)} <span class="opt-d">${esc(o.description)}</span></label>`).join("") +
+      (a.held ? `<label>${qq.multiSelect ? "" : `<input type="radio" name="${p}a${n}q${i}" value="other"> `}${t("alert.other")} <input type="text" data-other="${i}" style="width:min(420px,100%)"></label>` : "")).join("");
     const foot = a.held ? `<div class="actions"><button class="primary" data-send="${n}">${t("alert.send")}</button><button data-release="${n}">${t("alert.release")}</button></div>`
       : a.answers ? `<div class="meta">${t("alert.notheld")}</div>`
       : `<div class="meta">${t("alert.off", { wt: a.wtName, cmd: "" })}</div><div class="actions"><button class="primary" data-switch="answers" data-wt="${a.wt}" data-on="1">${t("switch.turn-on.answers")}</button></div>${cmdBlock(a.command || `cd ${q(a.path || ".")} && bash .claude/kit/scripts/work.sh ui answers on`)}`;
@@ -1413,7 +1427,7 @@ function saveDismissed() { try { localStorage.setItem(DISMISS_KEY, JSON.stringif
 function showAttention() {
   const every = attention.flatMap(g => g.alerts.map(a => ({ ...a, wt: g.wt, wtName: g.name, answers: g.answers, turns: g.turns, path: g.path })));
   document.title = (every.length ? `(${every.length}) ` : "") + "Foreman";
-  const all = every.filter(a => !(lastTask && sel && a.wt === sel.wt) && !dismissed.has(akey(a)));
+  const all = every.filter(a => !(lastTask && sel && a.wt === sel.wt) && !inChat(a, a.wt) && !dismissed.has(akey(a)));
   const hidden = every.filter(a => dismissed.has(akey(a)));
   const key = (a) => [a.wt, a.session, a.agent, a.kind, a.since].join("/");
   if (seenAlerts === null) seenAlerts = new Set(every.map(key));
@@ -1431,14 +1445,14 @@ function showAttention() {
   attnSig = sig;
   $("attn").innerHTML = all.map((a, n) => {
     const who = a.agent === "main" ? t("alert.main") : t("alert.agent", { id: a.agent.slice(0, 12) });
-    return `<div class="alert ${esc(a.kind)}" data-n="${n}"><div class="head">${HAND(16)} <button type="button" class="dismiss" data-dismiss="${esc(akey(a))}" title="${esc(t("dismiss"))}">×</button><b>${esc(a.wtName)}</b> · <span>${t("kind." + a.kind)}</span> · ${who} · <span class="meta">${t("alert.since", { time: new Date(a.since * 1000).toLocaleTimeString(lang === "pt" ? "pt-BR" : "en") })}</span></div><div class="meta">${t("kind." + a.kind + ".m")}</div>${alertBody(a, n)}</div>`;
+    return `<div class="alert ${esc(a.kind)}" data-n="${n}"><div class="head">${HAND(16)} <button type="button" class="dismiss" data-dismiss="${esc(akey(a))}" title="${esc(t("dismiss"))}">×</button><b>${esc(a.wtName)}</b> · <span>${t("kind." + a.kind)}</span> · ${who} · <span class="meta">${t("alert.since", { time: new Date(a.since * 1000).toLocaleTimeString(lang === "pt" ? "pt-BR" : "en") })}</span></div><div class="meta">${t("kind." + a.kind + ".m")}</div>${alertBody(a, n, "w")}</div>`;
   }).join("");
   if (hidden.length) $("attn").insertAdjacentHTML("beforeend", `<details class="dismissed"><summary>${t("dismissed.count", { n: hidden.length })}</summary>${hidden.map(a => `<div class="alert ${esc(a.kind)}"><b>${esc(a.wtName)}</b> · ${t("kind." + a.kind)} <button type="button" data-restore="${esc(akey(a))}">${t("dismiss.restore")}</button></div>`).join("")}</details>`);
   $("attn").querySelectorAll("[data-dismiss]").forEach(b => b.onclick = () => { dismissed.add(b.dataset.dismiss); saveDismissed(); attnSig = ""; tick() });
   $("attn").querySelectorAll("[data-restore]").forEach(b => b.onclick = () => { dismissed.delete(b.dataset.restore); saveDismissed(); attnSig = ""; tick() });
-  wireAlerts($("attn"), all);
+  wireAlerts($("attn"), all, "w");
 }
-function wireAlerts(box, all) {
+function wireAlerts(box, all, p = "") {
   const send = async (a, extra, el) => {
     const r = await post("api/answer", { wt: a.wt, session: a.session, agent: a.agent, qid: a.qid, ...extra });
     if (!r.ok) el.insertAdjacentHTML("beforeend", await errorText(r));
@@ -1456,7 +1470,7 @@ function wireAlerts(box, all) {
   box.querySelectorAll("[data-send]").forEach(b => b.onclick = () => {
     const n = +b.dataset.send, a = all[n], el = b.closest(".alert, .pop");
     const answers = a.questions.map((qq, i) => {
-      const picked = [...el.querySelectorAll(`input[name="a${n}q${i}"]:checked`)].map(x => x.value);
+      const picked = [...el.querySelectorAll(`input[name="${p}a${n}q${i}"]:checked`)].map(x => x.value);
       const text = el.querySelector(`input[data-other="${i}"]`).value.trim();
       const options = picked.filter(v => v !== "other").map(Number);
       const useOther = qq.multiSelect ? text : (picked.includes("other") || !options.length) ? text : "";
@@ -1530,7 +1544,7 @@ function showNow(d, list, now) {
   const alerts = g ? g.alerts.map(a => ({ ...a, wt: g.wt, wtName: g.name, answers: g.answers, turns: g.turns, path: g.path })) : [];
   const open = (d.findings || []).filter(x => x.view === "needs-you" && x.state === "open");
   const items = [];
-  alerts.forEach((a, n) => items.push(`<div class="alert ${esc(a.kind)}" data-n="${n}"><div class="head">${HAND(16)} <b>${t("kind." + a.kind)}</b> · ${a.agent === "main" ? t("alert.main") : esc(roleName((d.agents.find(l => l.agent === a.agent) || {}).type || "")) || t("alert.agent", { id: a.agent.slice(0, 12) })}</div>${alertBody(a, n)}</div>`));
+  alerts.forEach((a, n) => items.push(`<div class="alert ${esc(a.kind)}" data-n="${n}"><div class="head">${HAND(16)} <b>${t("kind." + a.kind)}</b> · ${a.agent === "main" ? t("alert.main") : esc(roleName((d.agents.find(l => l.agent === a.agent) || {}).type || "")) || t("alert.agent", { id: a.agent.slice(0, 12) })}</div>${alertBody(a, n, "n")}</div>`));
   if (open.length) items.push(`<div class="alert findings"><div class="head"><b>${t("now.findings", { n: open.length })}</b></div>${open.map(findingRow).join("")}</div>`);
   const s = shown(d);
   if (DEV_STEPS.includes(d.next_step) && !(d.next_step === "fix-fail" && !open.length && (d.findings || []).some(x => x.view === "agent"))) {
@@ -1558,7 +1572,7 @@ function showNow(d, list, now) {
   if (d.warning) extra.push(`<span class="bad">${has("warning." + d.warning) ? t("warning." + d.warning) : esc(d.warning)}</span>`);
   if (d.closed_by === "work.sh") extra.push(`<span class="meta">${t("closed.work.sh")}</span>`);
   setHTML($("now"), `<div class="now ${act ? "act" : "wait"}"><div class="verb">${t(act ? "now.act" : "now.wait")}</div><div class="nowbody"><div class="nowhead">${statusBadge(s)} <span class="meta">${statusMeaning(s)}</span></div>${body}${extra.length ? `<div class="extra">${extra.join(" · ")}</div>` : ""}${switchesLine(sel.wt)}</div></div>`);
-  wireAlerts($("now"), alerts);
+  wireAlerts($("now"), alerts, "n");
   wireFindings($("now"), d);
   if ($("clean-one")) $("clean-one").onclick = () => openCleanup(`wt=${sel.wt}&id=${encodeURIComponent(d.id)}`, false);
   if ($("close-one")) $("close-one").onclick = () => openClose(d, sel.wt);
@@ -2179,7 +2193,10 @@ function showOffice(d, list, now) {
 // The chat under the map, always open. The session's turn held for the page: the message goes
 // now. The session working: it waits in a queue and goes when the turn comes. No session: the page
 // cannot open one, so it writes the whole command for a terminal.
-let chatCtx = {}, chatQueue = null;
+let chatCtx = {}, chatQueue = null, chatTurnKey = "";
+// The turn the chat shows: it is answered there, so "Waiting on you" leaves it out.
+const tkey = (a) => [a.session, a.agent, a.kind, a.since].join("/");
+const inChat = (a, wt) => !!chatTurnKey && wt === chatCtx.wt && tkey(a) === chatTurnKey;
 function showChat(d, lanes) {
   const bar = $("chatbar");
   if (!bar) return;
@@ -2189,16 +2206,29 @@ function showChat(d, lanes) {
   const g = attention.find(x => x.wt === wtN);
   const held = g && g.alerts.find(a => a.agent === "main" && a.kind === "turn" && a.held);
   const turn = mh && mh.kind === "alert" && mh.alert.kind === "turn" && mh.alert.held ? mh.alert : held ? { ...held, wt: g.wt } : null;
+  // Stopped at the prompt with the page's hold over (it expired, or no page was open): the session
+  // waits in its terminal, and nothing the page sends reaches it until the dev types there.
+  const idleA = !turn && g && g.alerts.find(a => a.agent === "main" && a.kind === "turn" && !a.held);
+  const idle = idleA ? { ...idleA, wt: g.wt } : !turn && info.fresh ? { fresh: true, session: "", agent: "main", kind: "fresh", since: 0, wt: wtN } : null;
   const live = !!info.live || !!turn;
-  chatCtx = { turn, live, turnsOn, wt: wtN, path: info.path || (tg && tg.path) || (g && g.path) || ".", name: info.name || d.worktree || "" };
+  chatCtx = { turn, idle, live, turnsOn, wt: wtN, path: info.path || (tg && tg.path) || (g && g.path) || ".", name: info.name || d.worktree || "" };
   bar.classList.toggle("turn", !!turn);
-  setHTML($("chat-state"), turn ? t("chat.state.turn") : live ? t("chat.state.working") : t("chat.state.none", { wt: chatCtx.name }));
+  const tk = turn || (idle && !idle.fresh) ? tkey(turn || idle) : "";
+  if (tk !== chatTurnKey) { chatTurnKey = tk; attnSig = ""; showAttention(); showTodo(lastGroups) }
+  setHTML($("chat-state"), turn ? t("chat.state.turn") : idle ? t(idle.fresh ? "chat.state.fresh" : "chat.state.idle") : live ? t("chat.state.working") : t("chat.state.none", { wt: chatCtx.name }));
   const said = $("chat-said");
-  said.hidden = !turn || !turn.detail; if (turn && said.textContent !== turn.detail) said.textContent = turn.detail || "";
-  setHTML($("chat-send"), t(turn ? "chat.send" : live && turnsOn ? "chat.queue" : "chat.cmd"));
+  const shown = turn || idle;
+  said.hidden = !shown || !shown.detail;
+  if (shown && said.dataset.raw !== shown.detail) { said.dataset.raw = shown.detail || ""; said.innerHTML = mdLite(shown.detail || ""); said.scrollTop = 0 }
+  setHTML($("chat-send"), t(turn ? "chat.send" : idle ? "chat.term" : live && turnsOn ? "chat.queue" : "chat.cmd"));
   // A queued message goes the moment the session's turn is held for the page.
   if (turn && chatQueue && chatQueue.wt === wtN) { const text = chatQueue.text; chatQueue = null; deliver(turn, text) }
-  else if (chatQueue && chatQueue.wt === wtN) setHTML($("chat-extra"), `<div class="meta">${t("chat.queued")}</div><div class="meta">${esc(chatQueue.text)}</div>`);
+  else if (idle && chatQueue && chatQueue.wt === wtN) { const text = chatQueue.text; chatQueue = null; toTerminal(text, idle.fresh) }
+  else if (chatQueue && chatQueue.wt === wtN) {
+    setHTML($("chat-extra"), `<div class="meta">${t("chat.queued")}</div><div class="meta">${esc(chatQueue.text)}</div><div class="actions"><button type="button" data-unqueue>${t("chat.unqueue")}</button></div>`);
+    const b = $("chat-extra").querySelector("[data-unqueue]");
+    if (b) b.onclick = () => { if (chatQueue) $("chat-in").value = chatQueue.text; chatQueue = null; setHTML($("chat-extra"), "") };
+  }
   else if (live && !turnsOn && !turn && !$("chat-extra").dataset.cmd) setHTML($("chat-extra"), `<div class="meta">${t("chat.off")}</div><div class="actions"><button class="primary" data-switch="turns" data-wt="${wtN}" data-on="1">${t("switch.turn-on.turns")}</button></div>`);
 }
 async function deliver(turn, text) {
@@ -2207,10 +2237,18 @@ async function deliver(turn, text) {
   setHTML($("chat-extra"), r.ok ? `<div class="ok">${t("chat.sent")}</div>` : await errorText(r));
   setTimeout(tick, 300);
 }
+// The session's message, as Claude writes it: bold and code spans, nothing else.
+const mdLite = (text) => esc(text).replace(/\*\*([^*\n]+)\*\*/g, "<b>$1</b>").replace(/`([^`\n]+)`/g, "<code>$1</code>");
+// The page cannot type into a terminal: the text goes there by hand, copied from here.
+function toTerminal(text, fresh) {
+  $("chat-extra").dataset.cmd = "1";
+  setHTML($("chat-extra"), `<div class="meta">${t(fresh ? "chat.fresh" : "chat.idle")}</div>${cmdBlock(text)}`);
+}
 function sendChat() {
   const box = $("chat-in"), text = box.value, c = chatCtx;
   if (!text.trim()) return;
   if (c.turn) { box.value = ""; deliver(c.turn, text); return }
+  if (c.idle) { box.value = ""; toTerminal(text, c.idle.fresh); return }
   if (c.live && c.turnsOn) { chatQueue = { wt: c.wt, text }; box.value = ""; if (officeArgs) showOffice(...officeArgs.slice(0, 3)); return }
   $("chat-extra").dataset.cmd = "1";
   setHTML($("chat-extra"), `<div class="meta">${t("chat.none")}</div>${cmdBlock(`cd ${q(c.path)} && claude ${q(text)}`)}`);
@@ -2224,16 +2262,20 @@ function showPop(d, lanes) {
   const hand = lane ? handOf(d, lane) : null;
   const state = lane ? lane.state || "idle" : st && st.written ? "ok" : "idle";
   const when = lane ? (lane.end ? t("lane.took", { s: Math.round(lane.end - lane.start) }) : t("lane.since", { ago: ago(lane.start) })) : "";
-  let html = `<div class="pop"><button type="button" class="dismiss" data-close-pop title="${esc(t("pop.close"))}">×</button><div class="head">${avatarImg(openBot, 48)}<div><b>${esc(openBot === "main" ? t("office.foreman") : roleName(openBot))}</b><div class="meta">${has("lane.state." + state) ? t("lane.state." + state) : esc(state)}${when ? " · " + when : ""}</div></div></div>`;
+  let html = `<div class="pop"><button type="button" class="dismiss" data-close-pop title="${esc(t("pop.close"))}">×</button><div class="head">${avatarImg(openBot, 48)}<div><b>${esc(openBot === "main" ? t("office.foreman") : roleName(openBot))}</b><div class="meta">${has("lane.state." + state) ? t("lane.state." + state) : esc(state)}<span data-when></span></div></div></div>`;
   if (st) html += `<div class="meta">${t("pop.file", { file: st.file })}${st.verdict ? " · " + esc(verdictName(st.verdict)) : ""}</div>`;
-  if (lane && lane.last) html += `<details><summary>${t("lane.more")}</summary><div class="meta">${t("lane.id", { id: String(lane.agent).slice(0, 12), tools: lane.tools, ago: ago(lane.seen) })}</div><div class="detail">${esc(lane.last)}</div></details>`;
+  if (lane && lane.last) html += `<details><summary>${t("lane.more")}</summary><div class="meta" data-laneid></div><div class="detail">${esc(lane.last)}</div></details>`;
   if (lane && lane.summary) html += `<div class="detail">${esc(lane.summary)}</div>`;
   if (hand && hand.kind === "alert" && openBot === "main" && hand.alert.kind === "turn") html += `<div class="meta" style="margin-top:8px">${HAND(16)} ${t("pop.chat")}</div>`;
-  else if (hand && hand.kind === "alert") html += `<div class="alert ${esc(hand.alert.kind)}" style="margin-top:8px"><div class="head">${HAND(16)} ${t("kind." + hand.alert.kind)}</div>${alertBody(hand.alert, 0)}</div>`;
+  else if (hand && hand.kind === "alert") html += `<div class="alert ${esc(hand.alert.kind)}" style="margin-top:8px"><div class="head">${HAND(16)} ${t("kind." + hand.alert.kind)}</div>${alertBody(hand.alert, 0, "p")}</div>`;
   else if (hand) html += `<div class="warn">${t("pop.blocked")}</div>`;
   else if (!lane) html += `<div class="meta">${t("pop.idle")}</div>`;
   html += "</div>";
-  if (pop.dataset.html !== html) { pop.innerHTML = html; pop.dataset.html = html; if (hand && hand.kind === "alert" && !(openBot === "main" && hand.alert.kind === "turn")) wireAlerts(pop, [hand.alert]) }
+  if (pop.dataset.html !== html) { pop.innerHTML = html; pop.dataset.html = html; if (hand && hand.kind === "alert" && !(openBot === "main" && hand.alert.kind === "turn")) wireAlerts(pop, [hand.alert], "p") }
+  // Filled after the redraw check: they change every tick, and a redraw would wipe what the dev
+  // was marking in the card's question.
+  const w = pop.querySelector("[data-when]"); if (w) w.textContent = when ? " · " + when : "";
+  const li = pop.querySelector("[data-laneid]"); if (li && lane) li.textContent = t("lane.id", { id: String(lane.agent).slice(0, 12), tools: lane.tools, ago: ago(lane.seen) });
   pop.querySelector("[data-close-pop]").onclick = () => pickBot(openBot);
 }
 

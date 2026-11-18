@@ -500,12 +500,40 @@ def attention_hooks():
         hook(root, {"hook_event_name": "Stop", "session_id": "s1", "last_assistant_message": "done, token=abc123"})
         t = load("s1")
         assert t["kind"] == "turn" and "abc123" not in t["detail"], t
+        long = "word " * 400 + "THE END"
+        hook(root, {"hook_event_name": "Stop", "session_id": "s1", "last_assistant_message": long})
+        assert load("s1")["detail"].endswith("THE END"), "a turn keeps the whole message: the chat shows it"
         hook(root, {**perm, "agent_id": "a1"})
         hook(root, {"hook_event_name": "UserPromptSubmit", "session_id": "s1", "prompt": "go"})
         # Every alert goes; what stays is the session marker, which says a session lives there.
         assert os.listdir(os.path.join(att, "s1")) == [".session"], "UserPromptSubmit must clear the whole session"
         marker = json.load(open(os.path.join(att, "s1", ".session")))
         assert isinstance(marker["since"], float) and "claude_pid" in marker, marker
+        # A session just opened waits in its terminal: the page cannot reach it until its first Stop,
+        # and the chat says so instead of queueing a message that never goes.
+        dash = load_dashboard("dash_fresh")
+        wdir = os.path.join(root, ".work")
+        assert marker["fresh"] is False, "a prompted session is not fresh"
+        others = [x for x in os.listdir(att) if x != "s1" and os.path.isdir(os.path.join(att, x))]
+        saved = {x: json.load(open(os.path.join(att, x, ".session"))) for x in others
+                 if os.path.exists(os.path.join(att, x, ".session"))}
+        for x in saved:  # another live session that took a prompt is not fresh: it hides s1's state
+            os.remove(os.path.join(att, x, ".session"))
+        def alive_marker():  # the hook's parent is gone by now: this process stands in for Claude
+            mp = os.path.join(att, "s1", ".session")
+            m = json.load(open(mp)); m["claude_pid"] = os.getpid(); json.dump(m, open(mp, "w"))
+        hook(root, {"hook_event_name": "SessionStart", "session_id": "s1", "source": "startup"})
+        alive_marker()
+        assert dash.fresh_session(wdir, time.time()), "an opened session that took no prompt is fresh"
+        hook(root, {"hook_event_name": "SessionStart", "session_id": "s1", "source": "compact"})
+        alive_marker()
+        assert not dash.fresh_session(wdir, time.time()), "a compaction restarts mid-turn: not fresh"
+        hook(root, {"hook_event_name": "SessionStart", "session_id": "s1", "source": "startup"})
+        hook(root, {"hook_event_name": "UserPromptSubmit", "session_id": "s1", "prompt": "go"})
+        alive_marker()
+        assert not dash.fresh_session(wdir, time.time()), "a prompt ends fresh"
+        for x, m in saved.items():
+            json.dump(m, open(os.path.join(att, x, ".session"), "w"))
         for ev in ("SessionEnd", "SessionStart"):
             hook(root, {"hook_event_name": "Stop", "session_id": "s2"})
             hook(root, {**perm, "session_id": "s2"})
@@ -931,7 +959,9 @@ def wiring():
     guard = {"matcher": "Bash", "hooks": [{"type": "command", "command": "python3 guard.py", "timeout": 600}]}
     gone = {"type": "command", "command": "python3 \"$CLAUDE_PROJECT_DIR/.claude/kit/scripts/cleanup.py\" --hook"}
     old = {"hooks": {"SessionStart": [{"hooks": [gone]}], "PreToolUse": [guard, {"matcher": "*", "hooks": [flow_cmd]}],
-                     "SubagentStart": [{"hooks": [flow_cmd]}], "SubagentStop": [{"hooks": [flow_cmd]}]}}
+                     "SubagentStart": [{"hooks": [flow_cmd]}], "SubagentStop": [{"hooks": [flow_cmd]}],
+                     # An older kit wired the turn with 600 s: the upgrade must raise it, not add a second one.
+                     "Stop": [{"hooks": [{"type": "command", "command": w.TURN, "timeout": 600}]}]}}
     d = tempfile.mkdtemp()
     try:
         path = os.path.join(d, "settings.json")
@@ -950,10 +980,10 @@ def wiring():
             assert len(entry(event, matcher)) == 1, f"{event} {matcher} was not wired"
         # Permission dialogs and the main session's turn are held for the page: their own entry,
         # with the 600 s timeout the 570 s hold stays under.
-        for event, arg in (("PermissionRequest", "permission"), ("Stop", "turn")):
+        for event, arg, limit in (("PermissionRequest", "permission", 600), ("Stop", "turn", 8 * 3600)):
             got = entry(event, None)
             held = [h for h in got if h["command"].endswith(f'attention.py\" {arg}')]
-            assert len(got) == 2 and len(held) == 1 and held[0]["timeout"] == 600, f"{event}: {got}"
+            assert len(got) == 2 and len(held) == 1 and held[0]["timeout"] == limit, f"{event}: {got}"
         starts = [h["command"] for h in entry("SessionStart", None)]
         assert len(starts) == 2 and any("dashboard.py\" hook" in c for c in starts), starts
         assert not any("cleanup.py" in h["command"] for g in s.values() for x in g for h in x["hooks"]), \
@@ -2256,6 +2286,15 @@ def page_holds():
         out = json.loads(finish(proc))
         assert out["decision"] == "block" and out["reason"].endswith("yes, go on"), out
         assert not os.path.exists(os.path.join(adir, "t1", "main.json")), "an answered turn clears its alert"
+        # A turn that ends while a background subagent runs waits for that subagent, not the dev:
+        # a hold would keep its "done" notice from waking the session, and the flow would stall.
+        os.makedirs(os.path.join(adir, "t1", ".running"), exist_ok=True)
+        open(os.path.join(adir, "t1", ".running", "ag1"), "w").close()
+        t0 = time.monotonic()
+        p = subprocess.run([sys.executable, ATTN, "turn"], input=json.dumps(stop), capture_output=True, text=True, env=env)
+        assert p.stdout == "" and time.monotonic() - t0 < 5, "a Stop with a subagent running must not be held"
+        assert not os.path.exists(os.path.join(adir, "t1", "main.json")), "nor raise a turn alert"
+        shutil.rmtree(os.path.join(adir, "t1", ".running"))
         # A subagent's stop is never held.
         p = subprocess.run([sys.executable, ATTN, "turn"], input=json.dumps({**stop, "agent_id": "a9"}), capture_output=True, text=True, env=env)
         assert p.stdout == ""

@@ -23,7 +23,9 @@ CLEANUP = "python3 \"$CLAUDE_PROJECT_DIR/.claude/kit/scripts/dashboard.py\" hook
 GONE = ("cleanup.py",)
 
 # (event, matcher or None, command, timeout). The hold's 600 s is the hook timeout its 570 s
-# hold stays under; the rest return in milliseconds.
+# hold stays under; the turn's 8 h lets the chat reach an idle session while the page is open;
+# the rest return in milliseconds.
+TURN_TIMEOUT = 8 * 3600
 HOOKS = [
     ("PreToolUse", "*", FLOW, 10),
     ("PreToolUse", "AskUserQuestion", HOLD, 600),
@@ -36,7 +38,7 @@ HOOKS = [
     ("SubagentStart", None, FLOW, 10),
     ("SubagentStop", None, FLOW, 10),
     ("Stop", None, FLOW, 10),
-    ("Stop", None, TURN, 600),
+    ("Stop", None, TURN, TURN_TIMEOUT),
     ("UserPromptSubmit", None, FLOW, 10),
     ("SessionStart", None, FLOW, 10),
     ("SessionStart", None, CLEANUP, 10),
@@ -62,8 +64,13 @@ def wire(settings):
         groups[:] = [g for g in groups if g["hooks"]]
     for event, matcher, command, timeout in HOOKS:
         groups = hooks.setdefault(event, [])
-        if any(g.get("matcher") == matcher and same_script(h.get("command", ""), command)
-               for g in groups for h in g.get("hooks", [])):
+        mine = [h for g in groups if g.get("matcher") == matcher
+                for h in g.get("hooks", []) if same_script(h.get("command", ""), command)]
+        if mine:
+            # An older install's shorter timeout would kill a hold the hook now makes longer.
+            for h in mine:
+                if isinstance(h.get("timeout"), (int, float)) and h["timeout"] < timeout:
+                    h["timeout"] = timeout
             continue
         groups.append({**({"matcher": matcher} if matcher else {}),
                        "hooks": [{"type": "command", "command": command, "timeout": timeout}]})

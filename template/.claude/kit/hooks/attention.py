@@ -49,6 +49,9 @@ def _env_seconds(name, default):
 
 # 30 s under the 600 s hook timeout: the kill would leave a hook error instead of a fallback.
 HOLD_SECONDS = _env_seconds("KIT_ATTENTION_HOLD", 570)
+# The main session's turn waits for the page as long as the page stays open, so the chat reaches
+# it at any time: 30 s under its own 8 h hook timeout. Waiting costs no tokens (a local poll).
+TURN_HOLD_SECONDS = _env_seconds("KIT_ATTENTION_TURN_HOLD", 8 * 3600 - 30)
 # The page polls every 2 s; a heartbeat older than this means no page is open.
 PAGE_FRESH = 10
 # During a hold, how long without a poll before the question goes back to the terminal.
@@ -56,6 +59,8 @@ PAGE_GONE = _env_seconds("KIT_ATTENTION_PAGE_GONE", 30)
 POLL = _env_seconds("KIT_ATTENTION_POLL", 0.5)
 HEARTBEAT_EVERY = 2
 DETAIL_MAX = 200
+# A turn's detail is the session's whole last message: the page shows it in the chat, so it stays readable.
+TURN_MAX = 6000
 
 
 def attention_dir(flow):
@@ -86,8 +91,8 @@ def unlink(path):
         pass
 
 
-def short(text):
-    return F.mask(str(text or ""))[:DETAIL_MAX]
+def short(text, limit=DETAIL_MAX):
+    return F.mask(str(text or ""))[:limit]
 
 
 def claude_pid():
@@ -132,7 +137,7 @@ def raise_alert(flow, event, kind, detail, **extra):
     path = F.alert_path(flow, event.get("session_id"), event.get("agent_id") or "main")
     if not path:
         return None
-    alert = {"kind": kind, "since": time.time(), "detail": short(detail), "claude_pid": claude_pid(), **extra}
+    alert = {"kind": kind, "since": time.time(), "detail": short(detail, TURN_MAX if kind == "turn" else DETAIL_MAX), "claude_pid": claude_pid(), **extra}
     write_json(path, alert)
     return path, alert
 
@@ -211,7 +216,9 @@ def handle(event, flow):
         if path and not os.path.exists(path):
             raise_alert(flow, event, "permission", event.get("message") or "permission prompt")
     elif name == "Stop":
-        if not turns_on(attention_dir(flow)):
+        # A turn that ends while its subagents still run is not the dev's turn: Claude Code wakes
+        # the session when they finish.
+        if not turns_on(attention_dir(flow)) and not subagent_running(flow, session):
             raise_alert(flow, event, "turn", event.get("last_assistant_message") or "")
     elif name == "UserPromptSubmit":
         clear_session(flow, session, keep_running=True)
@@ -221,7 +228,9 @@ def handle(event, flow):
         # SessionStart covers a resume after a kill, which never ran SessionEnd.
         clear_session(flow, session)
         if name == "SessionStart":
-            mark_session(flow, session)
+            # Opened, resumed or cleared: at its prompt, with no Stop yet for the page to hold.
+            # A compaction restarts mid-turn, so it is not fresh.
+            mark_session(flow, session, fresh=event.get("source") in ("startup", "resume", "clear"))
             memory_requests(flow, name)
 
 
@@ -230,11 +239,13 @@ def handle(event, flow):
 SESSION_MARKER = ".session"
 
 
-def mark_session(flow, session):
+def mark_session(flow, session, fresh=False):
+    """fresh: the session has not taken a prompt since it opened, so it waits in its terminal and
+    the page cannot reach it until its first Stop."""
     if not F.ALERT_ID_RX.fullmatch(session or "") or session.endswith(".answer"):
         return
     write_json(os.path.join(attention_dir(flow), session, SESSION_MARKER),
-               {"claude_pid": claude_pid(), "since": time.time()})
+               {"claude_pid": claude_pid(), "since": time.time(), "fresh": bool(fresh)})
 
 
 # Same name as the dashboard's REQUESTS: the leading dot keeps it out of ALERT_ID_RX, so
@@ -373,12 +384,12 @@ def turns_on(adir):
 MAX_MESSAGE = 4000
 
 
-def wait_page(path, alert, adir, pid, still_on, extra=None):
+def wait_page(path, alert, adir, pid, still_on, extra=None, hold=None):
     """Holds while the page is open: the answer the page wrote ({qid, via: web, ...}), or None
     when it was released, the page went away, the switch went off, the session died or time ran
     out. The alert carries a heartbeat so the page knows it is held."""
     answer_path, release_path = path[:-len(".json")] + ".answer.json", path[:-len(".json")] + ".release"
-    deadline, beat = time.monotonic() + HOLD_SECONDS, time.monotonic()
+    deadline, beat = time.monotonic() + (HOLD_SECONDS if hold is None else hold), time.monotonic()
     while time.monotonic() < deadline:
         time.sleep(POLL)
         got = extra() if extra else None
@@ -406,7 +417,7 @@ def wait_page(path, alert, adir, pid, still_on, extra=None):
     return None
 
 
-def hold_alert(flow, event, kind, detail, still_on, extra=None, **fields):
+def hold_alert(flow, event, kind, detail, still_on, extra=None, hold=None, **fields):
     """Raises the alert, held for the page when it is open; returns (path, alert, answer)."""
     path = F.alert_path(flow, event.get("session_id"), event.get("agent_id") or "main")
     if not path:
@@ -416,10 +427,10 @@ def hold_alert(flow, event, kind, detail, still_on, extra=None, **fields):
         unlink(path[:-len(".json")] + suffix)
     held = still_on() and page_age(adir) < PAGE_FRESH
     pid = claude_pid()
-    alert = {"kind": kind, "since": time.time(), "detail": short(detail), "claude_pid": pid,
+    alert = {"kind": kind, "since": time.time(), "detail": short(detail, TURN_MAX if kind == "turn" else DETAIL_MAX), "claude_pid": pid,
              "qid": secrets.token_urlsafe(16), "held": held, "heartbeat": time.time(), **fields}
     write_json(path, alert)
-    picked = wait_page(path, alert, adir, pid, still_on, extra) if held else None
+    picked = wait_page(path, alert, adir, pid, still_on, extra, hold) if held else None
     if picked is None and os.path.exists(path):
         alert["held"] = False
         write_json(path, alert)
@@ -490,9 +501,14 @@ def hold_turn(event, flow):
     tid = F.current_id(flow) if hasattr(F, "current_id") else None
     if event.get("agent_id") or not (turns_on(adir) or awaiting_findings(flow, tid)):
         return 0
+    # The session launched subagents in the background and ended its turn to wait for them.
+    # Holding it would keep their "done" notice from waking it until the hold ends: the flow
+    # would stall between stages. It is not the dev's turn yet.
+    if subagent_running(flow, event.get("session_id")):
+        return 0
     path, alert, picked = hold_alert(flow, event, "turn", event.get("last_assistant_message") or "",
                                      lambda: turns_on(adir) or awaiting_findings(flow, tid),
-                                     extra=lambda: claim_findings(flow, tid), waits_for="findings" if awaiting_findings(flow, tid) else None)
+                                     extra=lambda: claim_findings(flow, tid), hold=TURN_HOLD_SECONDS, waits_for="findings" if awaiting_findings(flow, tid) else None)
     if isinstance(picked, dict) and picked.get("context"):
         if path:
             unlink(path)

@@ -1070,6 +1070,32 @@ def live_session(wdir, now):
     return any(now - e["t"] < STALE_AFTER for evs in events(wdir).values() for e in evs)
 
 
+def fresh_session(wdir, now):
+    """True when every live session here is fresh (opened and not yet prompted): it waits in its
+    terminal, and the page reaches it only after its first Stop. The page asks only when no turn
+    alert of the main session is up."""
+    adir = os.path.join(wdir, "attention")
+    try:
+        sessions = [s for s in os.listdir(adir) if safe_id(s)]
+    except OSError:
+        return False
+    seen = False
+    for session in sessions:
+        m = read_json(os.path.join(adir, session, SESSION_MARKER))
+        if not isinstance(m, dict):
+            continue
+        pid = m.get("claude_pid")
+        if isinstance(pid, int) and not isinstance(pid, bool) and pid > 1:
+            if not pid_alive(pid):
+                continue
+        elif not (isinstance(m.get("since"), (int, float)) and now - m["since"] < STALE_AFTER):
+            continue
+        if not m.get("fresh"):
+            return False
+        seen = True
+    return seen
+
+
 def sensitive(rel, work_rel, cleaned_ids, extra_dirs=()):
     """True for an ignored file that nobody can recreate from the remote: a local secret, or the
     state of a task this cleanup does not name."""
@@ -1401,7 +1427,8 @@ def list_worktrees(root, now=None):
         wdir = work_dir(wt)
         out.append({"wt": i, "name": os.path.basename(wt), "branch": branch, "path": wt,
                     "here": os.path.realpath(wt) == os.path.realpath(root),
-                    "live": bool(wdir) and live_session(wdir, now), "switches": switches_of(wt)})
+                    "live": bool(wdir) and live_session(wdir, now),
+                    "fresh": bool(wdir) and fresh_session(wdir, now), "switches": switches_of(wt)})
     return out
 
 
