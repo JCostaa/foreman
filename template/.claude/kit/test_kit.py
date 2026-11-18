@@ -265,6 +265,7 @@ def main():
     turn_holds()
     page_visibility()
     alert_text()
+    turn_awaits()
     language_hook()
     rooms_and_agents()
     switches()
@@ -2565,6 +2566,44 @@ def alert_text():
             os.environ["CLAUDE_CONFIG_DIR"] = saved
         shutil.rmtree(root)
         shutil.rmtree(config)
+
+
+def turn_awaits():
+    """A "your turn" waits on the dev (awaits) when held, or when no subagent of its session runs and
+    its message's end asks something or it has stood 2 minutes; one that waits only by those 2
+    minutes is idle. A question or permission always waits. A running marker counts while it is
+    fresh, or while its agent logs tool events (an older hook's marker); a stale one is ignored."""
+    d = load_dashboard("dash_awaits")
+    root = kit_root()
+    try:
+        w = os.path.join(root, ".work")
+        now = time.time()
+        sdir = os.path.join(w, "attention", "s1")
+        os.makedirs(sdir)
+        base = {"kind": "turn", "session": "s1", "since": now - 10}
+        assert d.awaits({**base, "message": "Contract written. Go on?"}, w, now)
+        assert not d.awaits({**base, "message": "Executor launched."}, w, now), "a progress note does not wait"
+        old = {**base, "since": now - 200, "message": "Executor finished."}
+        assert d.awaits(old, w, now) and d.idle_only(old), "two minutes with nothing resuming it: idle"
+        assert not d.idle_only({**base, "message": "Pick A or B?"}), "a turn that asks is never idle"
+        assert d.awaits({**base, "held": True, "message": "Executor launched."}, w, now), "a held turn always waits"
+        assert d.awaits({"kind": "question", "session": "s1", "since": now}, w, now)
+        marker = os.path.join(sdir, ".running", "agent-1")
+        os.makedirs(os.path.dirname(marker))
+        open(marker, "w").close()
+        assert not d.awaits({**base, "message": "Go on?"}, w, now), "a fresh running marker: the session works"
+        os.utime(marker, (now - 3600, now - 3600))
+        assert d.awaits({**base, "message": "Go on?"}, w, now), "a stale marker is ignored"
+        open(os.path.join(w, "events.jsonl"), "w").write(json.dumps(
+            {"t": now - 30, "work": "T-1", "agent": "agent-1", "ev": "tool", "tool": "Read"}) + "\n")
+        assert not d.awaits({**base, "message": "Go on?"}, w, now), "a marker whose agent logs tool events counts"
+        os.makedirs(os.path.join(w, "attention", "s2"))
+        json.dump({"kind": "turn", "since": now - 300, "detail": "Report written.", "message": "Report written."},
+                  open(os.path.join(w, "attention", "s2", "main.json"), "w"))
+        got = {a["session"]: a for a in d.list_attention(root)[0]["alerts"]}
+        assert got["s2"]["awaits"] and got["s2"]["idle"], got["s2"]
+    finally:
+        shutil.rmtree(root)
 
 
 def page_holds():

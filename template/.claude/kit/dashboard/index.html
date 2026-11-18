@@ -1317,13 +1317,17 @@ try { dismissed = new Set(JSON.parse(localStorage.getItem(DISMISS_KEY) || "[]"))
 function saveDismissed() { try { localStorage.setItem(DISMISS_KEY, JSON.stringify([...dismissed].slice(-300))) } catch (e) {} }
 function showAttention() {
   const every = attention.flatMap(g => g.alerts.map(a => ({ ...a, wt: g.wt, wtName: g.name, answers: g.answers, turns: g.turns, path: g.path })));
-  document.title = (every.length ? `(${every.length}) ` : "") + "Foreman";
+  // Only what waits on the dev counts and beeps: a turn that only informs, or one idle by time
+  // alone, is shown but stays quiet (dashboard.py awaits / idle).
+  const loud = (a) => a.awaits !== false && !a.idle;
+  const counted = every.filter(loud);
+  document.title = (counted.length ? `(${counted.length}) ` : "") + "Foreman";
   const all = every.filter(a => !(lastTask && sel && a.wt === sel.wt) && !dismissed.has(akey(a)));
   const hidden = every.filter(a => dismissed.has(akey(a)));
   const key = (a) => [a.wt, a.session, a.agent, a.kind, a.since].join("/");
   if (seenAlerts === null) seenAlerts = new Set(every.map(key));
   else every.forEach(a => {
-    if (seenAlerts.has(key(a))) return;
+    if (seenAlerts.has(key(a)) || !loud(a)) return;
     seenAlerts.add(key(a));
     beep();
     if ("Notification" in window && Notification.permission === "granted")

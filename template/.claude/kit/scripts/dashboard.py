@@ -1154,6 +1154,8 @@ def list_attention(root, now=None, visible=True):
             a.update(alert_action(a, answers_on, wt))
             if a["kind"] == "turn" and not a.get("message"):
                 a["message"] = transcript_tail(wt, a["session"], os.path.expanduser("~")) or a["detail"]
+            a["awaits"] = awaits(a, wdir, now)
+            a["idle"] = a["awaits"] and idle_only(a)
         q = shlex.quote
         memory = [{"id": tid, "action": "open-session", "command": f"cd {q(wt)} && claude {q('review the auto memory of ' + tid)}", "command_kind": "shell"}
                   for tid in pending]
@@ -1165,6 +1167,56 @@ def list_attention(root, now=None, visible=True):
                            "answers": answers_on, "turns": os.path.exists(os.path.join(adir, "turns-on")), "alerts": found,
                            "memory_requests": pending, "memory_actions": memory, "mr_check": check})
     return groups
+
+
+# Whether a "your turn" waits on the dev. A session that stops while its subagents run, or whose
+# last message is a progress note, is not asking anything: shown as pending, it taught the dev to
+# read every turn as noise. The words miss some asks, so a turn nothing resumed for AWAIT_AFTER
+# seconds waits on the dev whatever it says, as "idle": shown, neutral, never counted or beeped.
+AWAIT_AFTER = 120
+RUNNING = ".running"
+
+
+def subagents_running(wdir, session, now):
+    """hooks/attention.py keeps <session>/.running/<agent> between SubagentStart and SubagentStop,
+    touched on each of its tool calls. A marker older than STALE_AFTER is an agent whose stop never
+    came (a killed session), unless its agent still logs tool events: an older hook wrote the
+    marker once, and a long stage read as gone while it worked."""
+    rdir = os.path.join(wdir, "attention", session, RUNNING)
+    try:
+        names = os.listdir(rdir)
+    except OSError:
+        return False
+    if any(now - (mtime_ns(os.path.join(rdir, n)) or 0) / 1e9 < STALE_AFTER for n in names):
+        return True
+    last = {}
+    for evs in events(wdir).values():
+        for e in evs:
+            last[e["agent"]] = max(last.get(e["agent"], 0), e["t"])
+    return any(now - last.get(n, 0) < STALE_AFTER for n in names)
+
+
+def awaits(alert, wdir, now):
+    """True when the alert waits on the dev: a question or a permission always; a turn while the
+    hook holds it (its session is blocked until answered), or when no subagent of its session runs
+    and either the end of its message asks something or it has stood AWAIT_AFTER seconds."""
+    if alert.get("kind") != "turn":
+        return True
+    if alert.get("held"):
+        return True
+    if subagents_running(wdir, alert.get("session") or "", now):
+        return False
+    if _FLOW.asks(alert.get("message") or alert.get("detail")):
+        return True
+    since = alert.get("since")
+    return isinstance(since, (int, float)) and now - since >= AWAIT_AFTER
+
+
+def idle_only(alert):
+    """A turn that awaits only by the AWAIT_AFTER rule: its message asks nothing and no hook holds
+    it. The page lists it under "Idle sessions", neutral and uncounted, never under Answer: the
+    dev looked for a question in that terminal and found just the prompt."""
+    return alert.get("kind") == "turn" and not alert.get("held") and not _FLOW.asks(alert.get("message") or alert.get("detail"))
 
 
 TURN_MAX = 8000

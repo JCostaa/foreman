@@ -236,6 +236,13 @@ def whole_turn(page):
     assert "el.scrollTop = el.scrollHeight" in code, "scrolled to its end"
 
 
+def quiet_turns(page):
+    """Only what waits on the dev counts in the title and beeps: an informative or idle turn stays quiet."""
+    code = script(page)
+    assert "const loud = (a) => a.awaits !== false && !a.idle;" in code
+    assert "if (seenAlerts.has(key(a)) || !loud(a)) return;" in code, "no beep for a quiet turn"
+
+
 def switches_on_page(page):
     """The worktree's switches are on the page; turning one on or off asks first (with the risk
     when turning on) and posts with the token only from the confirmation."""
@@ -282,7 +289,7 @@ def preferences(page):
     assert 'new EventSource("api/events?t=" + encodeURIComponent(TOKEN))' in page and "startPoll()" in page, "live stream with a poll fallback"
 
 
-CHECKS = (whole_turn, visible_page, released_holds, not_applicable, both_languages, every_word_translated, whole_commands, answers_from_the_page, office, findings_panel, now_panel, tree, switches_on_page,
+CHECKS = (quiet_turns, whole_turn, visible_page, released_holds, not_applicable, both_languages, every_word_translated, whole_commands, answers_from_the_page, office, findings_panel, now_panel, tree, switches_on_page,
           noise_collapsed, cleanup_wiring, preferences)
 
 
@@ -327,6 +334,7 @@ MUTATIONS = (
     (visible_page, "always visible", lambda p: p.replace('(document.visibilityState === "hidden" ? "0" : "1")', '"1"')),
     (whole_turn, "cut message", lambda p: p.replace("${esc(a.message || a.detail)}</div>", "${esc(a.detail).slice(0, 600)}</div>")),
     (whole_turn, "not scrolled", lambda p: p.replace("el.scrollTop = el.scrollHeight", "el.scrollTop = 0")),
+    (quiet_turns, "idle beeps", lambda p: p.replace("|| !loud(a)) return;", ") return;")),
     (not_applicable, "na ignored", lambda p: p.replace("${s.na ? t(\"verdict.na\") : v ?", "${v ?")),
     (preferences, "no live stream", lambda p: p.replace('new EventSource("api/events?t=" + encodeURIComponent(TOKEN))', 'new EventSource("api/events")')),
 )
