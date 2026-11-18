@@ -50,7 +50,9 @@
   .brand .logo { width:40px; height:40px; flex:none } .brand .logo .pulse { stroke-dasharray:60; animation:pulse 2.4s linear infinite }
   .bname { display:flex; flex-direction:column; line-height:1.15 } .bname b { color:var(--accent); letter-spacing:.18em; font-size:16px }
   .bname span { color:var(--mute); font-size:11px; letter-spacing:.08em; text-transform:uppercase }
-  .controls { margin-left:auto; display:flex; flex-wrap:wrap; gap:8px; align-items:center; font-size:12px; color:var(--mute) }
+  .controls { margin-left:auto; display:flex; gap:8px; align-items:center; font-size:12px; color:var(--mute); position:relative }
+  .popover.menu { position:absolute; right:0; top:100%; margin:6px 0 0; z-index:5; min-width:240px; box-shadow:0 8px 24px rgba(0,0,0,.35) }
+  #menu-btn { font-size:16px }
   .live { display:inline-flex; align-items:center; gap:6px } .live i { width:8px; height:8px; border-radius:50%; background:var(--ok) } .live.off i { background:var(--warn) }
   @keyframes pulse { 0% { stroke-dashoffset:60 } 60%,100% { stroke-dashoffset:0 } }
   /* sidebar */
@@ -202,11 +204,14 @@
 <header class="brand"><svg class="logo" viewBox="0 0 64 64" aria-hidden="true"><rect x="10" y="23" width="44" height="34" rx="10" fill="#121826" stroke="#f5a524" stroke-width="3"/><path d="M7 27h50a2.5 2.5 0 0 0 0-5h-3.5C53.5 11.5 44 4 32 4S10.5 11.5 10.5 22H7a2.5 2.5 0 0 0 0 5z" fill="#f5a524"/><rect x="28.5" y="4.5" width="7" height="16" rx="2.5" fill="#c97f00"/><rect x="16" y="32" width="32" height="15" rx="5" fill="#070b14"/><path class="pulse" d="M19 40h6l3-5.5 4.5 11 3-5.5h9.5" fill="none" stroke="#4cc9f0" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"/><rect x="24" y="50" width="16" height="3" rx="1.5" fill="#f5a524" opacity=".55"/></svg><div class="bname"><b>FOREMAN</b><span data-i18n="brand.tag">mission control for coding agents</span></div>
 <div class="controls">
   <span class="live" id="live"></span>
-  <button id="lang-btn" type="button"></button>
-  <button id="notify-btn" type="button"></button>
-  <span id="notify-state"></span>
-  <button id="mute-btn" type="button"></button>
-  <button id="theme-btn" type="button"></button>
+  <button id="menu-btn" type="button" class="icon" aria-expanded="false" aria-controls="menu"></button>
+  <div id="menu" class="popover menu" hidden>
+    <button id="lang-btn" type="button"></button>
+    <button id="theme-btn" type="button"></button>
+    <button id="mute-btn" type="button"></button>
+    <button id="notify-btn" type="button"></button>
+    <span id="notify-state" class="meta"></span>
+  </div>
 </div></header>
 <section class="waiting" id="waiting" hidden>
 <h2><span data-i18n="needs.title">Needs you</span> <span class="ncount" id="needs-count" aria-live="polite"></span></h2>
@@ -641,7 +646,8 @@ const I18N = /* i18n:begin */{
   "side.done": "Done ({n})",
   "side.items": "{n} item(s) need you",
   "side.part": "part {k}/{n}",
-  "side.wt-items": "needs you, no task row"
+  "side.wt-items": "needs you, no task row",
+  "menu.title": "Settings: language, theme, sound and notifications"
  },
  "pt": {
   "lang.button": "PT / EN",
@@ -1045,7 +1051,8 @@ const I18N = /* i18n:begin */{
   "side.done": "Concluídas ({n})",
   "side.items": "{n} item(ns) precisam de você",
   "side.part": "parte {k}/{n}",
-  "side.wt-items": "precisa de você, sem linha de tarefa"
+  "side.wt-items": "precisa de você, sem linha de tarefa",
+  "menu.title": "Ajustes: idioma, tema, som e notificações"
  }
 }/* i18n:end */;
 // Statuses dashboard.py returns by name; any other status is the agent of the last stage written.
@@ -1231,6 +1238,7 @@ function applyLang() {
   const b = $("lang-btn");
   b.innerHTML = lang === "pt" ? "<b>PT</b> / EN" : "PT / <b>EN</b>";
   b.title = t("lang.title");
+  $("menu-btn").textContent = "⚙"; $("menu-btn").title = t("menu.title"); $("menu-btn").setAttribute("aria-label", t("menu.title"));
   $("side-filter").placeholder = t("side.filter"); $("side-filter").setAttribute("aria-label", t("side.filter"));
   $("side-grip").setAttribute("aria-label", t("side.grip")); $("side-gear").textContent = "⚙"; $("side-gear").title = t("side.gear"); $("side-gear").setAttribute("aria-label", t("side.gear"));
   applySide();
@@ -1392,6 +1400,8 @@ function disclosure(btn, pop) {
   pop.addEventListener("focusout", (e) => { if (!pop.contains(e.relatedTarget) && e.relatedTarget !== btn && !$("dlg").open) close(false) });
 }
 disclosure($("side-gear"), $("side-pop"));
+// The top bar is the brand, the live dot and one menu: language, theme, sound and notifications.
+disclosure($("menu-btn"), $("menu"));
 // The sidebar resizes from its edge (drag, or the arrow keys on the grip), 200 to 520 px and never
 // past 60% of the window; a double click goes back to 290. The chosen width is kept apart from the
 // clamped one, so a narrow window does not shrink it for good. Collapsed, it is a rail of dots.

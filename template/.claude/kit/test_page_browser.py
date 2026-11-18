@@ -252,7 +252,20 @@ def sidebar_step(page, ctx):
           (page.locator("#side-pop").is_hidden(), page.evaluate("document.activeElement.outerHTML.slice(0, 80)")))
 
 
-STEPS = [needs_step, fold_step, decide_step, sidebar_step]
+def menu_step(page, ctx):
+    """One settings menu: closed until opened, the language switch inside it, Escape closes it."""
+    check("menu: closed", page.locator("#lang-btn").is_hidden())
+    page.click("#menu-btn")
+    check("menu: open", page.locator("#lang-btn").is_visible() and page.get_attribute("#menu-btn", "aria-expanded") == "true")
+    page.click("#lang-btn")
+    page.wait_for_function("document.documentElement.lang === 'pt-BR'")
+    page.click("#lang-btn")
+    page.wait_for_function("document.documentElement.lang === 'en'")
+    page.keyboard.press("Escape")
+    check("menu: Escape closes and returns focus", page.locator("#menu").is_hidden() and page.evaluate("document.activeElement.id") == "menu-btn")
+
+
+STEPS = [needs_step, fold_step, decide_step, sidebar_step, menu_step]
 
 
 def main():

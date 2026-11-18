@@ -302,6 +302,18 @@ def sidebar(page):
     assert "const w = Math.max(200, Math.min(sideMax(), sideChosen));" in code, "the chosen width is kept apart from the clamped one"
 
 
+def top_bar(page):
+    """The top bar is the brand, the live dot and one menu holding language, theme, sound and
+    notifications: a disclosure (aria-expanded, no aria-haspopup) that Escape and focus leaving close."""
+    m = page[page.index('<div class="controls">'):page.index("</header>")]
+    for el in ("lang-btn", "theme-btn", "mute-btn", "notify-btn"):
+        assert m.index('id="menu"') < m.index(f'id="{el}"'), f"{el} sits in the menu"
+    assert 'id="menu-btn" type="button" class="icon" aria-expanded="false" aria-controls="menu"' in m and "aria-haspopup" not in page
+    code = script(page)
+    d = code[code.index("function disclosure"):code.index('disclosure($("side-gear")')]
+    assert 'if (e.key === "Escape") { e.stopPropagation(); close(true) }' in d and '"focusout"' in d and "btn.focus()" in d
+
+
 def switches_on_page(page):
     """The worktree's switches are on the page; turning one on or off asks first (with the risk
     when turning on) and posts with the token only from the confirmation."""
@@ -349,7 +361,7 @@ def preferences(page):
     assert 'new EventSource("api/events?t=" + encodeURIComponent(TOKEN))' in page and "startPoll()" in page, "live stream with a poll fallback"
 
 
-CHECKS = (sidebar, needs_list, findings_fold, whole_finding, quiet_turns, whole_turn, visible_page, released_holds, not_applicable, both_languages, every_word_translated, whole_commands, answers_from_the_page, office, findings_panel, now_panel, tree, switches_on_page,
+CHECKS = (top_bar, sidebar, needs_list, findings_fold, whole_finding, quiet_turns, whole_turn, visible_page, released_holds, not_applicable, both_languages, every_word_translated, whole_commands, answers_from_the_page, office, findings_panel, now_panel, tree, switches_on_page,
           noise_collapsed, cleanup_wiring, preferences)
 
 
@@ -407,6 +419,8 @@ MUTATIONS = (
     (sidebar, "always grouped", lambda p: p.replace("grouped = g.tasks.length > 1", "grouped = true")),
     (sidebar, "clamp saved", lambda p: p.replace("const w = Math.max(200, Math.min(sideMax(), sideChosen));", "const w = sideChosen = Math.max(200, Math.min(sideMax(), sideChosen));")),
     (sidebar, "done open", lambda p: p.replace("if (dd.open !== sideDoneOpen) dd.open = sideDoneOpen;", "dd.open = true;")),
+    (top_bar, "Escape ignored", lambda p: p.replace('if (e.key === "Escape") { e.stopPropagation(); close(true) }', "")),
+    (top_bar, "theme outside", lambda p: p.replace('    <button id="theme-btn" type="button"></button>\n', "").replace('<div id="menu" class="popover menu" hidden>', '<button id="theme-btn" type="button"></button><div id="menu" class="popover menu" hidden>')),
     (not_applicable, "na ignored", lambda p: p.replace("${s.na ? t(\"verdict.na\") : v ?", "${v ?")),
     (preferences, "no live stream", lambda p: p.replace('new EventSource("api/events?t=" + encodeURIComponent(TOKEN))', 'new EventSource("api/events")')),
 )
