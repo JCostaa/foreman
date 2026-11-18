@@ -64,6 +64,11 @@ EOF
       base=$(git -C "$root" rev-parse HEAD 2>/dev/null || echo none)
       printf '# Ledger: %s\n\nBase: %s\n\n<!-- One line per decision taken without asking the dev:\n- Ruling: <decision> | why: <reason> | cost if wrong: <impact> -->\n' "$id" "$base" > "$work/$id/ledger.md"
     fi
+    # The branch the task starts on is the task's: a later branch switch in this worktree (the
+    # next part of a split story) must not move the finished task back to ready-for-mr.
+    if [ ! -f "$work/$id/branch" ]; then
+      git -C "$root" rev-parse --abbrev-ref HEAD 2>/dev/null > "$work/$id/branch" || rm -f "$work/$id/branch"
+    fi
     echo "$id" > "$work/current"
     echo "$work/$id/00-purpose.md"
     ;;

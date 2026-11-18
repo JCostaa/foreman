@@ -19,6 +19,8 @@ orchestrator only carries paths and one-line statuses.
   05-retro.md               retrospective: what went wrong, proposed learnings
   findings-decision.md      orchestrator, after the dev picked which findings get fixed
   closed                    `work.sh done`: the task closed without (or before) a PR/MR
+  branch                    `work.sh init`: the branch the task started on, its PR/MR lookup's
+  mr.json                   the first PR/MR found open or merged, kept so done survives a branch switch
 .work/current               the ID being worked on (the gates read it)
 .work/events.jsonl          what every agent did, for the dashboard
 ```

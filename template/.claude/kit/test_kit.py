@@ -250,6 +250,7 @@ def main():
     partial_rerun_status()
     reopened_findings()
     closing_mr()
+    task_owns_branch()
     mr_fetch_http()
     work_done()
     closing_cleanup()
@@ -1110,6 +1111,64 @@ def reopened_findings():
         shutil.rmtree(base)
 
 
+def task_owns_branch():
+    """Two tasks in one worktree on different branches (a split story's parts): part 1's PR/MR is
+    found on its recorded branch and kept in mr.json; HEAD moves to part 2's branch: part 1 stays
+    done, part 2 is not; a later failed lookup keeps part 1 done; init records the branch. Both
+    forges: GitLab here, GitHub with the same rule."""
+    d = load_dashboard("dash_owns")
+    base = tempfile.mkdtemp()
+    saved = {k: os.environ.get(k) for k in ("GITLAB_TOKEN", "FORGE_HOST", "GITHUB_TOKEN", "GH_TOKEN")}
+    try:
+        for forge, origin in (("gitlab", "https://gitlab.example/g/p.git"), ("github", "https://github.com/o/p.git")):
+            for k in saved:
+                os.environ.pop(k, None)
+            os.environ["GITLAB_TOKEN"], os.environ["FORGE_HOST"] = "tok-x", "gitlab.example"
+            d._mr_cache.clear()
+            top = os.path.join(base, forge)
+            os.makedirs(top)
+            repo = new_repo(top, origin=origin)
+            wt = os.path.join(top, "wt")
+            git_in(repo, "worktree", "add", "-q", "-b", "feat/T-1-port", wt)
+            pass_all = [(n, "Verdict: PASS\n") for n in REVIEWS]
+            add_task(wt, "T-1", pass_all, current=True)
+            open(os.path.join(wt, ".work", "T-1", "branch"), "w").write("feat/T-1-port\n")
+            found = mr(7, "opened", "T-1 the port", "feat/T-1-port")
+            if forge == "github":
+                found = {"number": 7, "state": "open", "merged_at": None, "html_url": "https://github.com/o/p/pull/7",
+                         "title": "T-1 the port", "created_at": "2026-11-17T00:00:00Z",
+                         "head": {"ref": "feat/T-1-port", "repo": {"full_name": "o/p"}}, "base": {"repo": {"full_name": "o/p"}}}
+            d.FETCH = FetchStub(by_branch={"feat/T-1-port": [found]})
+            listed = lambda now: {k["id"]: k for g in d.list_tasks(repo, now) for k in g["tasks"] if os.path.basename(g["path"]) == "wt"}
+            now = time.time()
+            got = listed(now)
+            assert got["T-1"]["status"] == "done" and json.load(open(os.path.join(wt, ".work", "T-1", "mr.json")))["iid"] == 7, (forge, got["T-1"])
+            git_in(wt, "checkout", "-q", "-b", "feat/T-2-requester")
+            p = subprocess.run(["bash", WORK_SH, "init", "T-2", "part 2"], capture_output=True, text=True,
+                               env=dict(os.environ, CLAUDE_PROJECT_DIR=wt))
+            assert p.returncode == 0, p.stderr
+            assert open(os.path.join(wt, ".work", "T-2", "branch")).read().strip() == "feat/T-2-requester", "init records the task's branch"
+            for n, text in pass_all:
+                open(os.path.join(wt, ".work", "T-2", n), "w").write(text)
+            d._mr_cache.clear()
+            got = listed(now + 1)
+            assert got["T-1"]["status"] == "done" and got["T-2"]["status"] != "done", \
+                f"{forge}: part 1 stays done on its own branch, part 2 is not: {got['T-1']['status']}, {got['T-2']['status']}"
+            os.remove(os.path.join(wt, ".work", "T-1", "mr.json"))
+            d._mr_cache.clear()
+            assert listed(now + 1.5)["T-1"]["status"] == "done", "the lookup uses the task's recorded branch, not HEAD"
+            d._mr_cache.clear()
+            d.FETCH = FetchStub(error=lambda url, h: RuntimeError("down"))
+            assert listed(now + 2)["T-1"]["status"] == "done", f"{forge}: a failed lookup never undoes a kept PR/MR"
+    finally:
+        for k, v in saved.items():
+            if v is None:
+                os.environ.pop(k, None)
+            else:
+                os.environ[k] = v
+        shutil.rmtree(base)
+
+
 def closing_status():
     """A1, A8: "done" only from an MR (opened or merged) or the closed marker; before that,
     "findings" until findings-decision.md is at least as new as every review."""
@@ -1320,7 +1379,12 @@ def closing_mr():
             return urllib.error.HTTPError(url, 401, f"Unauthorized {headers}", {}, None)
         def boom_404(url, headers):
             return urllib.error.HTTPError(url, 404, "Not Found", {}, None)
+        # The PR/MR found above is kept in mr.json (task_owns_branch): these are lookups of a task
+        # that never had one.
+        kept = os.path.join(feat, ".work", "T-2", "mr.json")
         for boom in (boom_timeout, boom_401, boom_404):
+            if os.path.exists(kept):
+                os.remove(kept)
             d._mr_cache.clear()
             d.FETCH = stub = FetchStub(error=boom)
             got = tasks()
@@ -1328,6 +1392,8 @@ def closing_mr():
             tasks(now + 30)
             assert len(stub.calls) == 1, f"A5: a failure must be cached too: {stub.calls}"
         d._mr_cache.clear()
+        if os.path.exists(kept):
+            os.remove(kept)
         d.FETCH = stub = FetchStub(by_branch={"feat/t-2-x": {"message": "401"}})
         assert tasks()["T-2"]["mr"] == {"error": "unavailable"}, "a body that is not a list is a failure"
         d._mr_cache.clear()
@@ -1398,6 +1464,8 @@ def closing_mr():
         import threading
         for env_token, origin in ((sentinel, "https://gitlab.example/g/p.git"),
                                   (None, f"https://user:{sentinel}@gitlab.example/g/p.git")):
+            if os.path.exists(kept):
+                os.remove(kept)  # the GitHub PR above was kept: this task's lookup must fail here
             d._mr_cache.clear()
             d._seen_tokens.clear()
             os.environ.pop("GITLAB_TOKEN", None)

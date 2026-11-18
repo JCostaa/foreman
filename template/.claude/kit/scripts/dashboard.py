@@ -871,6 +871,45 @@ def mr_for(tid, current, lookup):
     return None
 
 
+# A task's branch and PR/MR are its own, not the worktree's HEAD: a session that moved on to the
+# next part in the same worktree switched HEAD, and the finished part read ready-for-mr again.
+# `work.sh init` records the branch; the first PR/MR found is kept.
+TASK_BRANCH_RX = re.compile(r"^(?!-)(?!.*\.\.)[A-Za-z0-9._/-]{1,200}$")
+
+
+def task_branch(tdir, head):
+    """The branch the task started on (.work/<ID>/branch), else the worktree's HEAD (a task
+    from before the file existed)."""
+    got = (read(os.path.join(tdir, "branch"), 300) or "").strip() if tdir else ""
+    return got if TASK_BRANCH_RX.match(got) and got != "HEAD" else head
+
+
+def task_mr(tid, tdir, current, found, branch):
+    """The task's PR/MR: the lookup's, kept in .work/<ID>/mr.json once opened or merged; the kept
+    one when the lookup finds none or fails, so done survives a branch switch or an outage."""
+    mr = mr_for(tid, current, found)
+    path = os.path.join(tdir, "mr.json") if tdir else None
+    if isinstance(mr, dict) and mr.get("state") in ("opened", "merged") and isinstance(mr.get("iid"), int) \
+            and isinstance(mr.get("web_url"), str) and path:
+        keep = {"iid": mr["iid"], "url": mr["web_url"], "state": mr["state"], "branch": branch}
+        if read_json(path) != keep:
+            try:
+                tmp = path + ".tmp"
+                with open(tmp, "w") as f:
+                    json.dump(keep, f)
+                os.replace(tmp, path)
+            except OSError:
+                pass
+        return mr
+    if isinstance(mr, dict) and mr.get("state") in ("opened", "merged"):
+        return mr
+    kept = read_json(path) if path else None
+    if isinstance(kept, dict) and kept.get("state") in ("opened", "merged") and isinstance(kept.get("iid"), int) \
+            and isinstance(kept.get("url"), str) and re.match(r"^https?://", kept["url"]):
+        return {"iid": kept["iid"], "state": kept["state"], "web_url": kept["url"]}
+    return mr
+
+
 def title(tdir, tid):
     first = (read(os.path.join(tdir, "00-purpose.md"), 2000) or "").split("\n", 1)[0]
     return first.lstrip("# ").removeprefix(tid).strip()
@@ -896,7 +935,7 @@ def task_ids(wdir):
 def full_state(wt, branch, flow, tid, tdir, lanes, st_list, found, current, root):
     """task_state plus the next step's command, the branch kind and the findings to decide."""
     kind = branch_kind(branch, flow)
-    state = task_state(st_list, lanes, tdir, mr_for(tid, current, found), lookup_possible=kind == "feature")
+    state = task_state(st_list, lanes, tdir, task_mr(tid, tdir, current, found, branch), lookup_possible=kind == "feature")
     remote = parse_remote(git_out(wt, "remote", "get-url", "origin")) if state["next_step"] == "fix-mr-check" else None
     command, command_kind = step_command(state, tid, wt, root or wt, remote[0] if remote else None,
                                          forge_of(remote[0], flow) if remote else None)
@@ -915,11 +954,14 @@ def worktree_tasks(wt, branch, now, lookup=True, root=None):
         return []
     flow, evs = flow_of(wt), events(wdir)
     current = (read(os.path.join(wdir, "current"), 200) or "").strip()
-    found = mr_lookup(wt, branch, flow, now, network=lookup)
+    lookups = {}
     tasks = []
     for tid in ids:
         mine, tdir = evs.get(tid, []), os.path.join(wdir, tid)
-        state = full_state(wt, branch, flow, tid, tdir, agents(mine, now), stages(flow, tdir), found, current, root)
+        tb = task_branch(tdir, branch)
+        if tb not in lookups:
+            lookups[tb] = mr_lookup(wt, tb, flow, now, network=lookup)
+        state = full_state(wt, tb, flow, tid, tdir, agents(mine, now), stages(flow, tdir), lookups[tb], current, root)
         tasks.append({"id": tid, "title": title(tdir, tid), **state, "current": tid == current,
                       "updated": max([e.get("t", 0) for e in mine] or [os.path.getmtime(tdir)])})
     tasks.sort(key=lambda t: (not t["current"], -t["updated"]))
@@ -953,6 +995,7 @@ def task_detail(root, wt_index, tid, now=None):
     mine = events(wdir).get(tid, [])
     lanes, st = agents(mine, now), stages(flow, tdir)
     current = (read(os.path.join(wdir, "current"), 200) or "").strip()
+    branch = task_branch(tdir, branch)
     state = full_state(wt, branch, flow, tid, tdir, lanes, st, mr_lookup(wt, branch, flow, now), current, root)
     files = {s["file"]: read(os.path.join(tdir, s["file"])) for s in st if s["written"]}
     purpose = read(os.path.join(tdir, "00-purpose.md")) or ""
