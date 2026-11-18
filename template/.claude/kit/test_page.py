@@ -138,7 +138,7 @@ def answers_from_the_page(page):
     assert 'post("api/answer", { wt: a.wt, session: a.session, agent: a.agent, qid: a.qid, ...extra })' in code
     for part in ('{ behavior: "allow" }', '{ behavior: "deny" }', "{ message: text }", "{ release: true }", "{ answers }"):
         assert part in code, f"the page must send {part}"
-    body = code[code.index("function alertBody"):code.index("function showAttention")]
+    body = code[code.index("function alertBody"):code.index("const goneAlerts")]
     assert '(a.held ? `<div class="actions"><button class="primary" data-allow=' in body, "allow and deny only on a held permission"
     assert '? `<textarea rows="3" data-msg=' in body, "the message box only on a held turn"
     assert "ui turns on" in body and "ui answers on" in body, "a switched-off answer shows the whole command to turn it on"
@@ -164,30 +164,65 @@ def office(page):
 
 
 def findings_panel(page):
-    """Each finding shows lens, severity, text, state and who acts; only an open finding that
-    waits on the dev offers fix or accept, posted one at a time with its key."""
+    """Each finding shows lens, severity, its whole text, state and who acts; only an open finding
+    that waits on the dev offers Fix or Accept, which stage a choice; one "Send N decisions" posts
+    each with its key. A dismissed alert hides and comes back."""
     code = script(page)
-    f = code[code.index("function findingRow"):code.index("let tab = ")]
-    for part in ("esc(lensName(x.lens))", 't("sev." + x.severity)', "esc(x.summary)", 't("fstate." + x.view)', "who(x)"):
+    f = code[code.index("function findingRow"):code.index("function decisionsBar")]
+    for part in ("esc(lensName(x.lens))", 't("sev." + x.severity)', "esc(x.full_text || x.summary)", 't("fstate." + x.view)', "who(x)"):
         assert part in f, f"a finding lacks {part}"
     assert 'x.view === "needs-you" && x.state === "open"' in f, "only an open finding that waits on the dev offers a choice"
-    assert 'post("api/findings-decision", { wt: sel.wt, id: d.id, key, decision })' in f, "a decision is posted with the finding's key"
-    w = code[code.index("function wireFindings"):code.index("let tab = ")]
-    assert w.index('$("decide-go").onclick') < w.index('post("api/findings-decision"') and w.count('post("api/findings-decision"') == 1, \
-        "a finding is decided only from the confirmation"
-    assert "dismissed.delete(b.dataset.restore)" in code and "!dismissed.has(akey(a))" in code, "a dismissed alert hides and comes back"
+    w = code[code.index("function wireFindings"):code.index("async function tellDecided")]
+    assert 'post("api/findings-decision"' not in w[:w.index("async function sendDecisions")], "Fix and Accept only stage a choice"
+    assert 'post("api/findings-decision", { wt, id: d.id, key: x.key, decision })' in w, "Send posts each choice with its key"
+    assert "staged.delete(stageKey(d, x));" in w and w.index("if (r.ok)") < w.index("staged.delete(stageKey(d, x));"), \
+        "only a choice that landed leaves the staged set"
+    tell = code[code.index("async function tellDecided"):code.index("let tab = ")]
+    assert ".filter(a => findingsAsk(a, d.id))" in tell, "only the findings ask itself is answered"
+    assert 'kind: "findings-decided", id: d.id' in tell, "a turn gets the server's message"
+    assert "dismissed.delete(b.dataset.restore)" in code and "if (dismissed.has(akey(a))) return;" in code, "a dismissed alert hides and comes back"
 
 
 def now_panel(page):
-    """One line for the dev: NEEDS YOU when an alert, a finding or a step waits on them (each with its
-    answer right there), WAIT otherwise, naming who works on what."""
+    """One line for the dev: NEEDS YOU when an item of this worktree or a step waits on them, WAIT
+    otherwise, naming who works on what. Alerts and findings are not repeated there: Now counts
+    this worktree's items and leads to the steps view for the findings."""
     code = script(page)
     n = code[code.index("function showNow"):code.index("const LENS_ROLE")]
     assert 't(act ? "now.act" : "now.wait")' in n and "const act = items.length > 0;" in n
-    assert "alertBody(a, n)" in n and "wireAlerts($(\"now\"), alerts)" in n, "the task's alerts are answered in Now"
-    assert "open.map(findingRow)" in n and "wireFindings($(\"now\"), d)" in n, "open findings are decided in Now"
+    assert "alertBody(" not in n and "findingRow" not in n, "Now repeats no alert and no finding"
+    assert 't("needs.mine", { n: mine.length })' in n and "decideIn(+b.dataset.decide, b.dataset.id)" in n
     assert 'l.state === "running" && l.type !== "main"' in n, "WAIT says which agents work"
-    assert "!(sel && g.wt === sel.wt)" in code, "the waiting block keeps to the other tasks"
+
+
+def needs_list(page):
+    """One list of what needs the dev, grouped Answer, Approve, Decide, Ship, then Idle sessions and
+    a closed Progress group: each item in exactly one row, the count, the title and the sidebar
+    badges counting the same items of the four action groups; amber only for Answer and Approve."""
+    code = script(page)
+    assert 'const NEED_GROUPS = ["answer", "approve", "decide", "ship"];' in code
+    b = code[code.index("function buildNeeds"):code.index("function needRowHTML")]
+    assert 'a.awaits === false ? "progress" : a.idle ? "idle" : a.kind === "permission" ? "approve" : "answer"' in b
+    sh = code[code.index("function showNeeds"):code.index("function decideIn")]
+    assert 'needCount = needItems.filter(i => NEED_GROUPS.includes(i.group)).length;' in sh
+    assert 'document.title = (needCount ? `(${needCount}) ` : "") + "Foreman";' in sh
+    assert "const pending = (wt) => needItems.filter(i => i.wt === wt && NEED_GROUPS.includes(i.group)).length;" in code
+    assert '<details class="ngroup" data-group="progress" hidden>' in page, "Progress starts closed"
+    assert 'id="needs-count" aria-live="polite"' in page
+    assert '.ngroup[data-group="answer"] .nrow, .ngroup[data-group="approve"] .nrow { border-left-color:var(--warn) }' in page
+    assert "function patchRows" in code and 'el.dataset.html !== r.html' in code, "a row whose markup is the same is kept"
+    assert "d.hidden = s.has(r.dataset.row)" in code, "a row not looked at yet has a dot"
+
+
+def findings_fold(page):
+    """Only the findings decision itself folds into its task's Decide row: the main session's held
+    question whose every question text starts with "Findings <ID>:", or its held turn whose whole
+    message is the announcement. Anything else keeps its own row."""
+    code = script(page)
+    f = code[code.index("function findingsAsk"):code.index("const findingsWts")]
+    assert 'if (!a || !a.held || a.agent !== "main" || !id) return false;' in f
+    assert 'a.questions.every(qq => qq && typeof qq.question === "string" && qq.question.startsWith("Findings " + id + ":"))' in f
+    assert 'String(a.message || "").trim() === ANNOUNCE(id)' in f, "the announcement is the turn's whole message"
 
 
 def tree(page):
@@ -199,6 +234,94 @@ def tree(page):
     assert "fs.map(findingRow)" in tr, "findings sit under their review"
     assert "openNodes.has(s.file)" in tr and "d.files[s.file]" in tr, "a step's file opens under it"
 
+def not_applicable(page):
+    """A PASS with a "## Not applicable" section (dashboard.py "na") reads as such on its lens."""
+    code = script(page)
+    assert '${s.na ? t("verdict.na") : v ? esc(verdictName(v))' in code, "a not applicable lens reads as a plain approval"
+    d = dictionary(page)
+    assert all("verdict.na" in d[l] for l in LANGS)
+
+
+def released_holds(page):
+    """A question or turn whose hold let go says why and when, and the way out: a question keeps its
+    options pickable and lists what to choose in the terminal; a turn gets a text box and Copy."""
+    code = script(page)
+    body = code[code.index("function alertBody"):code.index("const goneAlerts")]
+    assert body.count("goneHTML(a, n)") == 2, "both a question and a turn show why their hold let go"
+    assert '${a.held || a.released ? "" : " disabled"}' in body, "a released question's options stay pickable"
+    gone = code[code.index("function goneHTML"):code.index("function goneAnswer")]
+    assert 't("gone." + (has("gone." + a.released) ? a.released : "stopped")' in gone and "data-copy" in gone \
+        and "data-gone-picks" in gone, "why it let go, Copy for a turn, the picks for a question"
+    srv = server()
+    d = dictionary(page)
+    assert all(f"gone.{r}" in d[l] for r in srv.RELEASE_REASONS for l in LANGS), "every release reason is said"
+
+
+def visible_page(page):
+    """The page says whether it is in view on every poll: only a page in view keeps a hold."""
+    code = script(page)
+    assert 'getJSON("api/attention?visible=" + (document.visibilityState === "hidden" ? "0" : "1"))' in code
+    assert 'addEventListener("visibilitychange"' in code, "a page back in view polls at once"
+
+
+def whole_turn(page):
+    """A turn shows its whole message, open and scrolled to its end, where the ask is."""
+    code = script(page)
+    assert '<div class="turn-msg" data-turn-msg>${esc(a.message || a.detail)}</div>' in code
+    assert "el.scrollTop = el.scrollHeight" in code, "scrolled to its end"
+
+
+def quiet_turns(page):
+    """Only what waits on the dev counts in the title and beeps: an informative or idle turn stays quiet."""
+    code = script(page)
+    assert "const loud = (a) => a.awaits !== false && !a.idle;" in code
+    assert "if (seenAlerts.has(key(a)) || !loud(a)) return;" in code, "no beep for a quiet turn"
+
+
+def whole_finding(page):
+    """Each finding is shown whole where the dev decides: its full text and its details."""
+    code = script(page)
+    assert "${esc(x.full_text || x.summary)}" in code and '<div class="fdetail">${esc(x.details)}</div>' in code
+
+
+def sidebar(page):
+    """The sidebar navigates: one row per task with a status dot and at most one count, grouped by
+    worktree only when it has more than one task, needs-you first, done ones closed; a filter on
+    "/", arrow keys, a resizable edge kept apart from the clamp, a rail of dots, and the count of
+    an item with no task row on its worktree."""
+    code = script(page)
+    sd = code[code.index("function sideCounts"):code.index("function renderSidePop")]
+    assert "grouped = g.tasks.length > 1" in sd, "grouped only for a worktree with several tasks"
+    assert "else if (g && g.tasks.length === 1)" in sd and "loose.set(i.wt" in sd, "an item of no row counts on the only row, or the header"
+    assert 'const sideRank = (k, n) => n ? 0 : RUNNING.includes(k.status) ? 1 : k.status === "done" ? 3 : 2;' in code
+    assert '<details class="done" id="side-done">' in sd and "if (dd.open !== sideDoneOpen) dd.open = sideDoneOpen;" in sd, \
+        "done tasks sit in a closed Done section"
+    assert 'if (e.key === "/" && !typing)' in code and 'e.key !== "ArrowDown" && e.key !== "ArrowUp"' in code
+    assert "Math.max(200, Math.min(520, Math.floor(window.innerWidth * 0.6)))" in code and "chooseSide(SIDE_DEFAULT)" in code
+    assert "try { sideChosen = +localStorage.getItem(SIDE_KEY) || SIDE_DEFAULT;" in code, "the width is read inside try"
+    assert "const w = Math.max(200, Math.min(sideMax(), sideChosen));" in code, "the chosen width is kept apart from the clamped one"
+
+
+def top_bar(page):
+    """The top bar is the brand, the live dot and one menu holding language, theme, sound and
+    notifications: a disclosure (aria-expanded, no aria-haspopup) that Escape and focus leaving close."""
+    m = page[page.index('<div class="controls">'):page.index("</header>")]
+    for el in ("lang-btn", "theme-btn", "mute-btn", "notify-btn"):
+        assert m.index('id="menu"') < m.index(f'id="{el}"'), f"{el} sits in the menu"
+    assert 'id="menu-btn" type="button" class="icon" aria-expanded="false" aria-controls="menu"' in m and "aria-haspopup" not in page
+    code = script(page)
+    d = code[code.index("function disclosure"):code.index('disclosure($("side-gear")')]
+    assert 'if (e.key === "Escape") { e.stopPropagation(); close(true) }' in d and '"focusout"' in d and "btn.focus()" in d
+
+
+def calm_panel(page):
+    """A calm needs panel: no red band, no solid verb block; a capped box fades at its fold."""
+    assert "background:var(--bad); border-radius:9px" not in page, "sidebar counts are not red"
+    assert ".now.act .verb { background:var(--warn)" not in page
+    code = script(page)
+    assert "function foldHints" in code and 'el.classList.toggle("fold", over);' in code and "foldHints();" in code
+
+
 def switches_on_page(page):
     """The worktree's switches are on the page; turning one on or off asks first (with the risk
     when turning on) and posts with the token only from the confirmation."""
@@ -208,7 +331,8 @@ def switches_on_page(page):
     go = sw[sw.index('$("switch-go").onclick'):]
     assert 'post("api/switch"' in go and sw.index('post("api/switch"') > sw.index('$("switch-go").onclick'), "only the confirmation posts"
     assert '${on ? `<div class="warn" style="margin-top:8px">${t("switch.risk")}</div>` : ""}' in sw, "turning on says the risk"
-    assert "${switchesLine(sel.wt)}" in code, "the switches show in Now"
+    assert "${switchesLine(g.wt)}" in code and "disclosure($(\"side-gear\"), $(\"side-pop\"));" in code, \
+        "the switches of each worktree sit in the sidebar's gear popover"
     assert 'data-switch="answers"' in code and 'data-switch="turns"' in code, "an alert that is off offers to turn it on"
 
 
@@ -245,7 +369,7 @@ def preferences(page):
     assert 'new EventSource("api/events?t=" + encodeURIComponent(TOKEN))' in page and "startPoll()" in page, "live stream with a poll fallback"
 
 
-CHECKS = (both_languages, every_word_translated, whole_commands, answers_from_the_page, office, findings_panel, now_panel, tree, switches_on_page,
+CHECKS = (calm_panel, top_bar, sidebar, needs_list, findings_fold, whole_finding, quiet_turns, whole_turn, visible_page, released_holds, not_applicable, both_languages, every_word_translated, whole_commands, answers_from_the_page, office, findings_panel, now_panel, tree, switches_on_page,
           noise_collapsed, cleanup_wiring, preferences)
 
 
@@ -271,19 +395,43 @@ MUTATIONS = (
     (answers_from_the_page, "no token", lambda p: p.replace('"X-Kit-Token": TOKEN }, body: JSON.stringify(body) })', '}, body: JSON.stringify(body) })')),
     (office, "no hand", lambda p: p.replace("hand ? '<span class=\"bubble hand\"", "false ? '<span class=\"bubble hand\"")),
     (now_panel, "always WAIT", lambda p: p.replace('t(act ? "now.act" : "now.wait")', 't("now.wait")')),
-    (now_panel, "findings not in Now", lambda p: p.replace("open.map(findingRow)", "[].map(findingRow)")),
+    (now_panel, "Now repeats alerts", lambda p: p.replace('if (mine.length) items.push(', 'mine.forEach(a => items.push(alertBody(a, 0)));\n  if (mine.length) items.push(')),
+    (needs_list, "idle counted", lambda p: p.replace('a.awaits === false ? "progress" : a.idle ? "idle" :', 'a.awaits === false ? "progress" :')),
+    (needs_list, "title counts every row", lambda p: p.replace('document.title = (needCount ? `(${needCount}) `', 'document.title = (needItems.length ? `(${needItems.length}) `')),
+    (needs_list, "amber everywhere", lambda p: p.replace('.ngroup[data-group="answer"] .nrow, .ngroup[data-group="approve"] .nrow {', '.nrow {')),
+    (findings_fold, "fold on the header", lambda p: p.replace('qq.question.startsWith("Findings " + id + ":")', 'String(qq.header).includes(id)')),
+    (findings_fold, "fold any turn", lambda p: p.replace('String(a.message || "").trim() === ANNOUNCE(id)', 'String(a.message || "").includes(id)')),
+    (findings_fold, "subagent folds", lambda p: p.replace('if (!a || !a.held || a.agent !== "main" || !id) return false;', 'if (!a || !a.held || !id) return false;')),
     (switches_on_page, "no risk said", lambda p: p.replace('${t("switch.risk")}', "")),
     (switches_on_page, "posts on the first click", lambda p: p.replace('const dlg = $("dlg");\n  dlg.innerHTML = `<h3>${t("switch.confirm.title."', 'post("api/switch", { wt, name, on });\n  const dlg = $("dlg");\n  dlg.innerHTML = `<h3>${t("switch.confirm.title."')),
     (tree, "no you-are-here", lambda p: p.replace('const here = i === now ? `<span class="you">', 'const here = false ? `<span class="you">')),
     (office, "QA has no desk", lambda p: p.replace('"security-reviewer", "qa-reviewer", "product-reviewer"] }', '"security-reviewer", "product-reviewer"] }')),
     (office, "custom agents unnamed", lambda p: p.replace("String(pick(agentCfg(a).label) || a)", "String(a)")),
-    (findings_panel, "choice on every finding", lambda p: p.replace('x.view === "needs-you" && x.state === "open"', "true")),
-    (findings_panel, "who acts dropped", lambda p: p.replace('<div class="factor">${who(x)}</div>', "")),
+    (findings_panel, "choice on every finding", lambda p: p.replace('const choose = x.view === "needs-you" && x.state === "open"', "const choose = true")),
+    (findings_panel, "posted on the click", lambda p: p.replace("staged.get(k) === b.dataset.stage ? staged.delete(k) : staged.set(k, b.dataset.stage);", 'post("api/findings-decision", { wt: sel.wt, id: d.id, key: x.key, decision: b.dataset.stage });')),
+    (findings_panel, "failed choice dropped", lambda p: p.replace("      if (r.ok) {\n        ok++;\n        staged.delete(stageKey(d, x));", "      staged.delete(stageKey(d, x));\n      if (r.ok) {\n        ok++;")),
+    (findings_panel, "tells every held ask", lambda p: p.replace(".filter(a => findingsAsk(a, d.id))", ".filter(a => a.held)")),
+    (findings_panel, "who acts dropped", lambda p: p.replace('<div class="factor">${who(x)}</div>${choose}', "${choose}")),
     (noise_collapsed, "events open", lambda p: p.replace('<details id="events">', '<details id="events" open>')),
     (cleanup_wiring, "plan hash not sent", lambda p: p.replace("plan: cleanPlan.plan })", "plan: null })")),
     (preferences, "theme outside try", lambda p: p.replace('try { theme = ["light", "dark", "system"].includes(localStorage.getItem(THEME_KEY)) ? localStorage.getItem(THEME_KEY) : "dark" } catch (e) {}', 'theme = localStorage.getItem(THEME_KEY);')),
-    (findings_panel, "decided on the first click", lambda p: p.replace('  const decide = (b, key, decision) => {\n', '  const decide = (b, key, decision) => {\n    post("api/findings-decision", { wt: sel.wt, id: d.id, key, decision });\n')),
-    (findings_panel, "dismissed alerts not restorable", lambda p: p.replace("dismissed.delete(b.dataset.restore)", "dismissed.add(b.dataset.restore)")),
+    (findings_panel, "dismissed alerts not restorable", lambda p: p.replace("dismissed.delete(b.dataset.restore); saveDismissed()", "dismissed.add(b.dataset.restore); saveDismissed()")),
+    (released_holds, "released question disabled", lambda p: p.replace('${a.held || a.released ? "" : " disabled"}', '${a.held ? "" : " disabled"}')),
+    (released_holds, "released turn silent", lambda p: p.replace("    : a.released ? goneHTML(a, n)\n    : a.turns", "    : a.turns")),
+    (released_holds, "no copy for a turn", lambda p: p.replace("<button type=\"button\" data-copy data-gone-for=", "<button type=\"button\" data-gone-for=")),
+    (visible_page, "always visible", lambda p: p.replace('(document.visibilityState === "hidden" ? "0" : "1")', '"1"')),
+    (whole_turn, "cut message", lambda p: p.replace("${esc(a.message || a.detail)}</div>", "${esc(a.detail).slice(0, 600)}</div>")),
+    (whole_turn, "not scrolled", lambda p: p.replace("el.scrollTop = el.scrollHeight", "el.scrollTop = 0")),
+    (quiet_turns, "idle beeps", lambda p: p.replace("|| !loud(a)) return;", ") return;")),
+    (whole_finding, "summary only", lambda p: p.replace("${esc(x.full_text || x.summary)}", "${esc(x.summary)}")),
+    (sidebar, "always grouped", lambda p: p.replace("grouped = g.tasks.length > 1", "grouped = true")),
+    (sidebar, "clamp saved", lambda p: p.replace("const w = Math.max(200, Math.min(sideMax(), sideChosen));", "const w = sideChosen = Math.max(200, Math.min(sideMax(), sideChosen));")),
+    (sidebar, "done open", lambda p: p.replace("if (dd.open !== sideDoneOpen) dd.open = sideDoneOpen;", "dd.open = true;")),
+    (top_bar, "Escape ignored", lambda p: p.replace('if (e.key === "Escape") { e.stopPropagation(); close(true) }', "")),
+    (top_bar, "theme outside", lambda p: p.replace('    <button id="theme-btn" type="button"></button>\n', "").replace('<div id="menu" class="popover menu" hidden>', '<button id="theme-btn" type="button"></button><div id="menu" class="popover menu" hidden>')),
+    (calm_panel, "red badges", lambda p: p.replace("color:#111; background:var(--warn); border-radius:9px", "color:#fff; background:var(--bad); border-radius:9px")),
+    (calm_panel, "no fold hint", lambda p: p.replace('el.classList.toggle("fold", over);', "")),
+    (not_applicable, "na ignored", lambda p: p.replace("${s.na ? t(\"verdict.na\") : v ?", "${v ?")),
     (preferences, "no live stream", lambda p: p.replace('new EventSource("api/events?t=" + encodeURIComponent(TOKEN))', 'new EventSource("api/events")')),
 )
 

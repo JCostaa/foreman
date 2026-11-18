@@ -47,6 +47,22 @@ SENSITIVE = [
 ]
 
 
+# What a turn's last message asks of the dev: a "?" or an explicit ask, English or Portuguese, in
+# its last ASK_TAIL characters, where a session puts its question. Shared by the Stop hold
+# (attention.py), which holds only a turn that asks, and the dashboard, which tells a turn that
+# waits on the dev from one that only informs.
+ASK_TAIL = 600
+ASK_WORDS = re.compile(
+    r"\b(?:responda|confirme|aprova|escolha|posso seguir|quer que|me diga|decida|aguardo|me avise"
+    r"|prefere|se estiver ok|answer|reply|confirm|approve|choose|shall i|should i|let me know|decide"
+    r"|prefer|if it'?s ok|go-ahead|waiting for your|which option)\b", re.I)
+
+
+def asks(text):
+    tail = str(text or "")[-ASK_TAIL:]
+    return "?" in tail or bool(ASK_WORDS.search(tail))
+
+
 def mask(text):
     for rx, repl in SENSITIVE:
         text = rx.sub(repl, text)
