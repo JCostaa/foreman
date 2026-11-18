@@ -284,6 +284,24 @@ def whole_finding(page):
     assert "${esc(x.full_text || x.summary)}" in code and '<div class="fdetail">${esc(x.details)}</div>' in code
 
 
+def sidebar(page):
+    """The sidebar navigates: one row per task with a status dot and at most one count, grouped by
+    worktree only when it has more than one task, needs-you first, done ones closed; a filter on
+    "/", arrow keys, a resizable edge kept apart from the clamp, a rail of dots, and the count of
+    an item with no task row on its worktree."""
+    code = script(page)
+    sd = code[code.index("function sideCounts"):code.index("function renderSidePop")]
+    assert "grouped = g.tasks.length > 1" in sd, "grouped only for a worktree with several tasks"
+    assert "else if (g && g.tasks.length === 1)" in sd and "loose.set(i.wt" in sd, "an item of no row counts on the only row, or the header"
+    assert 'const sideRank = (k, n) => n ? 0 : RUNNING.includes(k.status) ? 1 : k.status === "done" ? 3 : 2;' in code
+    assert '<details class="done" id="side-done">' in sd and "if (dd.open !== sideDoneOpen) dd.open = sideDoneOpen;" in sd, \
+        "done tasks sit in a closed Done section"
+    assert 'if (e.key === "/" && !typing)' in code and 'e.key !== "ArrowDown" && e.key !== "ArrowUp"' in code
+    assert "Math.max(200, Math.min(520, Math.floor(window.innerWidth * 0.6)))" in code and "chooseSide(SIDE_DEFAULT)" in code
+    assert "try { sideChosen = +localStorage.getItem(SIDE_KEY) || SIDE_DEFAULT;" in code, "the width is read inside try"
+    assert "const w = Math.max(200, Math.min(sideMax(), sideChosen));" in code, "the chosen width is kept apart from the clamped one"
+
+
 def switches_on_page(page):
     """The worktree's switches are on the page; turning one on or off asks first (with the risk
     when turning on) and posts with the token only from the confirmation."""
@@ -293,7 +311,8 @@ def switches_on_page(page):
     go = sw[sw.index('$("switch-go").onclick'):]
     assert 'post("api/switch"' in go and sw.index('post("api/switch"') > sw.index('$("switch-go").onclick'), "only the confirmation posts"
     assert '${on ? `<div class="warn" style="margin-top:8px">${t("switch.risk")}</div>` : ""}' in sw, "turning on says the risk"
-    assert "${switchesLine(sel.wt)}" in code, "the switches show in Now"
+    assert "${switchesLine(g.wt)}" in code and "disclosure($(\"side-gear\"), $(\"side-pop\"));" in code, \
+        "the switches of each worktree sit in the sidebar's gear popover"
     assert 'data-switch="answers"' in code and 'data-switch="turns"' in code, "an alert that is off offers to turn it on"
 
 
@@ -330,7 +349,7 @@ def preferences(page):
     assert 'new EventSource("api/events?t=" + encodeURIComponent(TOKEN))' in page and "startPoll()" in page, "live stream with a poll fallback"
 
 
-CHECKS = (needs_list, findings_fold, whole_finding, quiet_turns, whole_turn, visible_page, released_holds, not_applicable, both_languages, every_word_translated, whole_commands, answers_from_the_page, office, findings_panel, now_panel, tree, switches_on_page,
+CHECKS = (sidebar, needs_list, findings_fold, whole_finding, quiet_turns, whole_turn, visible_page, released_holds, not_applicable, both_languages, every_word_translated, whole_commands, answers_from_the_page, office, findings_panel, now_panel, tree, switches_on_page,
           noise_collapsed, cleanup_wiring, preferences)
 
 
@@ -385,6 +404,9 @@ MUTATIONS = (
     (whole_turn, "not scrolled", lambda p: p.replace("el.scrollTop = el.scrollHeight", "el.scrollTop = 0")),
     (quiet_turns, "idle beeps", lambda p: p.replace("|| !loud(a)) return;", ") return;")),
     (whole_finding, "summary only", lambda p: p.replace("${esc(x.full_text || x.summary)}", "${esc(x.summary)}")),
+    (sidebar, "always grouped", lambda p: p.replace("grouped = g.tasks.length > 1", "grouped = true")),
+    (sidebar, "clamp saved", lambda p: p.replace("const w = Math.max(200, Math.min(sideMax(), sideChosen));", "const w = sideChosen = Math.max(200, Math.min(sideMax(), sideChosen));")),
+    (sidebar, "done open", lambda p: p.replace("if (dd.open !== sideDoneOpen) dd.open = sideDoneOpen;", "dd.open = true;")),
     (not_applicable, "na ignored", lambda p: p.replace("${s.na ? t(\"verdict.na\") : v ?", "${v ?")),
     (preferences, "no live stream", lambda p: p.replace('new EventSource("api/events?t=" + encodeURIComponent(TOKEN))', 'new EventSource("api/events")')),
 )

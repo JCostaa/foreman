@@ -17,11 +17,24 @@
   * { box-sizing:border-box }
   body { margin:0; color:var(--fg); font:13px/1.5 var(--mono); background:radial-gradient(1200px 600px at 70% -200px, rgba(76,201,240,.07), transparent 60%), var(--bg) }
   :root[data-theme="light"] body { background:var(--bg) }
-  .app { display:grid; grid-template-columns:280px minmax(0,1fr); min-height:100vh }
+  .app { display:grid; grid-template-columns:var(--side-w, 290px) minmax(0,1fr); min-height:100vh }
+  .app.rail { grid-template-columns:44px minmax(0,1fr) }
   aside { border-right:1px solid var(--line); background:linear-gradient(180deg, var(--card), var(--bg)); padding:12px 0; max-height:100vh; position:sticky; top:0; overflow:auto; display:flex; flex-direction:column }
+  .side-top { display:flex; align-items:center; gap:4px; padding:0 8px 8px 14px } .side-top .side-h { padding:0; flex:1 }
+  button.icon { padding:0 6px; border-color:transparent; background:none; color:var(--mute) } button.icon:hover { color:var(--fg) } #side-gear.on { color:var(--ok) }
+  #side-filter { margin:0 10px 6px; width:auto }
+  .popover[hidden] { display:none } .popover { margin:0 10px 8px; background:var(--card); border:1px solid var(--line); border-radius:4px; padding:8px; display:grid; gap:6px; font-size:12px }
+  #side-grip { position:absolute; top:0; right:-3px; width:6px; height:100%; cursor:col-resize; z-index:2 } #side-grip:focus { outline:2px solid var(--accent) }
+  aside { position:sticky } .app.rail aside .side-h, .app.rail #side-filter, .app.rail #side-gear, .app.rail #merge-box, .app.rail .credit, .app.rail #side-pop, .app.rail #side-grip { display:none }
+  .app.rail .task .id, .app.rail .task .ttl, .app.rail .task .part, .app.rail .task .badge, .app.rail .task .sub, .app.rail .wt, .app.rail .done-h { display:none }
+  .app.rail .task { padding:6px 0; text-align:center } .app.rail .side-top { padding:0 0 8px; justify-content:center }
+  .sdot { display:inline-block; width:9px; height:9px; border-radius:50%; border:2px solid var(--mute); flex:none }
+  .sdot.amber { background:var(--warn); border-color:var(--warn) } .sdot.run { background:var(--run); border-color:var(--run) } .sdot.bad { background:var(--bad); border-color:var(--bad) } .sdot.faint { opacity:.35 }
+  .task .ttl { color:var(--mute); white-space:nowrap; overflow:hidden; text-overflow:ellipsis; flex:1; min-width:0 } .task .part { font-size:10px; color:var(--mute); white-space:nowrap }
+  .done-h { padding:8px 14px 2px; font-size:12px; color:var(--mute); cursor:pointer }
   #tasks { flex:1 }
   main { padding:16px 20px 40px; min-width:0 }
-  @media (max-width: 860px) { .app { grid-template-columns:1fr } aside { position:static; max-height:none; border-right:0; border-bottom:1px solid var(--line) } }
+  @media (max-width: 700px) { .app, .app.rail { grid-template-columns:1fr } aside { position:static; max-height:none; border-right:0; border-bottom:1px solid var(--line) } }
   button { font:inherit; background:var(--card); color:var(--fg); border:1px solid var(--line); border-radius:3px; padding:3px 12px; cursor:pointer }
   button:hover { border-color:var(--accent) } button:disabled { opacity:.5; cursor:default }
   button.primary { border-color:var(--accent); color:var(--accent) } button.danger { border-color:var(--bad); color:var(--bad) }
@@ -45,7 +58,7 @@
   .wt { padding:10px 14px 4px; color:var(--mute); font-size:12px; overflow-wrap:anywhere } .wt b { color:var(--fg) }
   .task { display:block; width:100%; text-align:left; border:0; border-left:3px solid transparent; border-radius:0; background:none; padding:6px 14px 6px 18px }
   .task:hover, .task.sel { background:var(--sel) } .task.sel { border-left-color:var(--accent) }
-  .task .t { display:flex; gap:6px; align-items:center } .task .id { font-weight:600 }
+  .task .t { display:flex; gap:6px; align-items:center; min-width:0 } .task .id { font-weight:600; white-space:nowrap }
   .task .sub { color:var(--mute); font-size:12px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis }
   .credit { display:block; padding:14px; color:var(--mute); font-size:11px; text-decoration:none; border-top:1px solid var(--line) } .credit:hover { color:var(--accent) }
   .badge { display:inline-block; min-width:18px; text-align:center; font-size:11px; font-weight:700; color:#fff; background:var(--bad); border-radius:9px; padding:0 6px; margin-left:6px }
@@ -58,11 +71,11 @@
   .waiting h2 { color:var(--fg) } .ncount { color:var(--mute); text-transform:none; letter-spacing:0 }
   .ngroup { margin-top:8px } .ngroup-h { font-size:11px; text-transform:uppercase; letter-spacing:.12em; color:var(--mute); margin:6px 0 4px; cursor:default }
   details.ngroup > summary.ngroup-h { cursor:pointer } .ngroup-h .n { color:var(--fg) }
-  .nlist { display:grid; gap:6px }
+  .nlist { display:grid; grid-template-columns:minmax(0,1fr); gap:6px }
   .nrow { background:var(--card2); border:1px solid var(--line); border-left:3px solid var(--line); border-radius:4px; padding:6px 10px; overflow-wrap:anywhere }
   .ngroup[data-group="answer"] .nrow, .ngroup[data-group="approve"] .nrow { border-left-color:var(--warn) }
   .ngroup[data-group="idle"] .nrow, .ngroup[data-group="progress"] .nrow { opacity:.8 }
-  .nrow.mine { box-shadow:inset 0 0 0 1px var(--accent) }
+  .nrow.mine { box-shadow:inset 0 0 0 1px rgba(76,201,240,.45) }
   .nrow-h { display:flex; gap:8px; align-items:center } .nmain { flex:1; min-width:0 } .nwho { font-size:12px; color:var(--mute) } .nwho b { color:var(--fg) }
   .nsay { white-space:nowrap; overflow:hidden; text-overflow:ellipsis }
   .nside { display:flex; gap:6px; align-items:center; flex-wrap:wrap; justify-content:flex-end }
@@ -178,7 +191,13 @@
 </head>
 <body>
 <div class="app">
-<aside><div class="side-h" data-i18n="side.tasks">Tasks</div><div id="tasks"><div class="meta" style="padding:0 14px" data-i18n="loading">Loading…</div></div><a class="credit" href="https://github.com/yantadeu/foreman" target="_blank" rel="noopener" data-i18n="brand.credit">Foreman by Yan Tadeu · Apache-2.0</a></aside>
+<aside id="side"><div class="side-top"><span class="side-h" data-i18n="side.tasks">Tasks</span><button type="button" id="side-gear" class="icon" aria-expanded="false" aria-controls="side-pop"></button><button type="button" id="side-collapse" class="icon"></button></div>
+<div id="side-pop" class="popover" hidden></div>
+<input type="search" id="side-filter" autocomplete="off">
+<div id="tasks"><div class="meta" style="padding:0 14px" data-i18n="loading">Loading…</div></div>
+<details id="merge-box" hidden><summary id="merge-sum"></summary><div id="merge"></div></details>
+<div id="side-grip" role="separator" aria-orientation="vertical" tabindex="0"></div>
+<a class="credit" href="https://github.com/yantadeu/foreman" target="_blank" rel="noopener" data-i18n="brand.credit">Foreman by Yan Tadeu · Apache-2.0</a></aside>
 <main>
 <header class="brand"><svg class="logo" viewBox="0 0 64 64" aria-hidden="true"><rect x="10" y="23" width="44" height="34" rx="10" fill="#121826" stroke="#f5a524" stroke-width="3"/><path d="M7 27h50a2.5 2.5 0 0 0 0-5h-3.5C53.5 11.5 44 4 32 4S10.5 11.5 10.5 22H7a2.5 2.5 0 0 0 0 5z" fill="#f5a524"/><rect x="28.5" y="4.5" width="7" height="16" rx="2.5" fill="#c97f00"/><rect x="16" y="32" width="32" height="15" rx="5" fill="#070b14"/><path class="pulse" d="M19 40h6l3-5.5 4.5 11 3-5.5h9.5" fill="none" stroke="#4cc9f0" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"/><rect x="24" y="50" width="16" height="3" rx="1.5" fill="#f5a524" opacity=".55"/></svg><div class="bname"><b>FOREMAN</b><span data-i18n="brand.tag">mission control for coding agents</span></div>
 <div class="controls">
@@ -613,7 +632,16 @@ const I18N = /* i18n:begin */{
   "decide.refused": "Not recorded: {summary}",
   "decide.done": "{ok} of {n} recorded.",
   "decide.told": "The session waiting for this decision was told to go on.",
-  "decide.tell": "Every finding is decided. No session holds the question for the page: send it this message."
+  "decide.tell": "Every finding is decided. No session holds the question for the page: send it this message.",
+  "side.filter": "Filter by id or title (/)",
+  "side.collapse": "Collapse the sidebar to a rail",
+  "side.expand": "Expand the sidebar",
+  "side.grip": "Resize the sidebar (arrow keys; double click resets)",
+  "side.gear": "Answer here: the switches of each worktree",
+  "side.done": "Done ({n})",
+  "side.items": "{n} item(s) need you",
+  "side.part": "part {k}/{n}",
+  "side.wt-items": "needs you, no task row"
  },
  "pt": {
   "lang.button": "PT / EN",
@@ -1008,7 +1036,16 @@ const I18N = /* i18n:begin */{
   "decide.refused": "Não registrado: {summary}",
   "decide.done": "{ok} de {n} registradas.",
   "decide.told": "A sessão que esperava esta decisão foi avisada para seguir.",
-  "decide.tell": "Todo achado está decidido. Nenhuma sessão retém a pergunta para a página: mande esta mensagem a ela."
+  "decide.tell": "Todo achado está decidido. Nenhuma sessão retém a pergunta para a página: mande esta mensagem a ela.",
+  "side.filter": "Filtrar por id ou título (/)",
+  "side.collapse": "Recolher a barra lateral",
+  "side.expand": "Expandir a barra lateral",
+  "side.grip": "Redimensionar a barra lateral (setas; duplo clique volta ao padrão)",
+  "side.gear": "Responder aqui: os interruptores de cada worktree",
+  "side.done": "Concluídas ({n})",
+  "side.items": "{n} item(ns) precisam de você",
+  "side.part": "parte {k}/{n}",
+  "side.wt-items": "precisa de você, sem linha de tarefa"
  }
 }/* i18n:end */;
 // Statuses dashboard.py returns by name; any other status is the agent of the last stage written.
@@ -1194,6 +1231,9 @@ function applyLang() {
   const b = $("lang-btn");
   b.innerHTML = lang === "pt" ? "<b>PT</b> / EN" : "PT / <b>EN</b>";
   b.title = t("lang.title");
+  $("side-filter").placeholder = t("side.filter"); $("side-filter").setAttribute("aria-label", t("side.filter"));
+  $("side-grip").setAttribute("aria-label", t("side.grip")); $("side-gear").textContent = "⚙"; $("side-gear").title = t("side.gear"); $("side-gear").setAttribute("aria-label", t("side.gear"));
+  applySide();
   notifyState(); muteLabel(); applyTheme(); liveLabel();
 }
 $("lang-btn").onclick = () => {
@@ -1265,14 +1305,128 @@ async function render() {
     const pick = all.find(k => k.here && k.current) || all.filter(k => k.status === "running").sort((a, b) => b.updated - a.updated)[0] || all[0];
     sel = pick ? { wt: pick.wt, id: pick.id } : null;
   }
-  setHTML($("tasks"), groups.map(g => `
-    <div class="wt"><b>${esc(g.name)}</b>${g.branch ? " · " + esc(g.branch) : ""}${g.here ? " · " + t("here") : ""}${pending(g.wt) ? `<span class="badge" title="${esc(t("pending.badge"))}">${pending(g.wt)}</span>` : ""}</div>
-    ${g.tasks.map(k => `<button class="task${sel && sel.wt === g.wt && sel.id === k.id ? " sel" : ""}" data-wt="${g.wt}" data-id="${esc(k.id)}">
-      <div class="t"><span class="id">${k.current ? "● " : ""}${esc(k.id)}</span>${statusBadge(shown(k))}</div>
-      <div class="sub">${esc(k.title) || "&nbsp;"}</div></button>`).join("")}`).join("") || `<div class="meta" style="padding:0 14px">${t("no.task.any")}</div>`);
-  document.querySelectorAll(".task").forEach(b => b.onclick = () => select(+b.dataset.wt, b.dataset.id));
+  renderSide(groups);
   await showTask();
 }
+
+// The sidebar navigates: one row per task, a status dot, the id, the title, "part k/N" and at most
+// one count, the needs-you items of that task. An item that names no task row counts on its
+// worktree's only row, else on the worktree's header, or on a line of its own. Rows are grouped
+// under their worktree only when it has more than one task; needs-you first, then running, then
+// the rest; done tasks with nothing to do sit in a closed "Done (n)".
+const RUNNING = ["running", "fixing"], BAD = ["FAIL", "blocked"];
+let sideFilter = "";
+function sideCounts(groups) {
+  const per = new Map(), loose = new Map();
+  needItems.filter(i => NEED_GROUPS.includes(i.group) && i.wt != null).forEach(i => {
+    const g = groups.find(x => x.wt === i.wt), ids = String(i.task || "").split(", ").filter(Boolean);
+    const hit = g ? ids.filter(id => g.tasks.some(k => k.id === id)) : [];
+    if (hit.length) hit.forEach(id => per.set(i.wt + "/" + id, (per.get(i.wt + "/" + id) || 0) + 1));
+    else if (g && g.tasks.length === 1) per.set(i.wt + "/" + g.tasks[0].id, (per.get(i.wt + "/" + g.tasks[0].id) || 0) + 1);
+    else loose.set(i.wt, (loose.get(i.wt) || 0) + 1);
+  });
+  return { per, loose };
+}
+const sideRank = (k, n) => n ? 0 : RUNNING.includes(k.status) ? 1 : k.status === "done" ? 3 : 2;
+function sideRow(g, k, n, grouped) {
+  const st = shown(k), dot = n ? "amber" : RUNNING.includes(k.status) ? "run" : BAD.includes(k.status) ? "bad" : k.status === "done" ? "faint" : "";
+  const part = k.part ? `<span class="part">${t("side.part", { k: k.part.k, n: k.part.n })}</span>` : "";
+  const tip = `${k.id}${k.title ? " · " + k.title : ""} · ${statusLabel(st).replace(/<[^>]+>/g, "")}`;
+  return `<button type="button" class="task${sel && sel.wt === g.wt && sel.id === k.id ? " sel" : ""}" data-wt="${g.wt}" data-id="${esc(k.id)}" title="${esc(tip)}">
+    <div class="t"><i class="sdot ${dot}" aria-hidden="true"></i><span class="id">${esc(k.id)}</span><span class="ttl">${esc(k.title)}</span>${part}${n ? `<span class="badge" title="${esc(t("side.items", { n }))}">${n}</span>` : ""}</div>
+    ${grouped ? "" : `<div class="sub">${esc(g.name)}${g.here ? " · " + t("here") : ""}</div>`}</button>`;
+}
+function renderSide(groups) {
+  const { per, loose } = sideCounts(groups);
+  const f = sideFilter.trim().toLowerCase();
+  const match = (k) => !f || k.id.toLowerCase().includes(f) || String(k.title || "").toLowerCase().includes(f);
+  const blocks = [], done = [];
+  groups.forEach(g => {
+    const ks = g.tasks.map(k => ({ k, n: per.get(g.wt + "/" + k.id) || 0 })).filter(x => match(x.k));
+    const live = ks.filter(x => !(x.k.status === "done" && !x.n)).sort((a, b) => sideRank(a.k, a.n) - sideRank(b.k, b.n));
+    done.push(...ks.filter(x => x.k.status === "done" && !x.n).map(x => ({ g, ...x })));
+    const extra = loose.get(g.wt) || 0, grouped = g.tasks.length > 1;
+    if (!live.length && !extra) return;
+    const head = grouped || (!g.tasks.length && extra) || (extra && live.length !== 1)
+      ? `<div class="wt" title="${esc(extra ? t("side.wt-items") : "")}">${extra ? '<i class="sdot amber" aria-hidden="true"></i> ' : ""}<b>${esc(g.name)}</b>${g.branch ? " · " + esc(g.branch) : ""}${g.here ? " · " + t("here") : ""}${extra ? `<span class="badge" title="${esc(t("side.items", { n: extra }))}">${extra}</span>` : ""}</div>` : "";
+    blocks.push({ rank: Math.min(extra ? 0 : 9, ...live.map(x => sideRank(x.k, x.n))), html: head + live.map(x => sideRow(g, x.k, x.n, grouped)).join("") });
+  });
+  blocks.sort((a, b) => a.rank - b.rank);
+  const doneHTML = done.length ? `<details class="done" id="side-done"><summary class="done-h">${t("side.done", { n: done.length })}</summary>${done.map(x => sideRow(x.g, x.k, 0, false)).join("")}</details>` : "";
+  setHTML($("tasks"), blocks.map(b => b.html).join("") + doneHTML || `<div class="meta" style="padding:0 14px">${t("no.task.any")}</div>`);
+  const dd = $("side-done");
+  // Closed by default; kept as the dev left it across renders.
+  if (dd) { if (dd.open !== sideDoneOpen) dd.open = sideDoneOpen; dd.ontoggle = () => { sideDoneOpen = dd.open } }
+  document.querySelectorAll("#tasks .task").forEach(b => b.onclick = () => select(+b.dataset.wt, b.dataset.id));
+  renderSidePop(groups);
+}
+let sideDoneOpen = false;
+$("side-filter").addEventListener("input", (e) => { sideFilter = e.target.value; renderSide(lastGroups) });
+// "/" focuses the filter; up and down move between the rows, Enter opens one.
+document.addEventListener("keydown", (e) => {
+  const typing = e.target.closest && e.target.closest("input, textarea, select, [contenteditable]");
+  if (e.key === "/" && !typing) { e.preventDefault(); $("side-filter").focus(); return }
+  if (e.key !== "ArrowDown" && e.key !== "ArrowUp") return;
+  if (!(e.target === $("side-filter") || (e.target.closest && e.target.closest("#tasks .task")))) return;
+  const rowsNow = [...document.querySelectorAll("#tasks .task")].filter(b => b.offsetParent !== null);
+  if (!rowsNow.length) return;
+  e.preventDefault();
+  const at = rowsNow.indexOf(document.activeElement);
+  rowsNow[Math.max(0, Math.min(rowsNow.length - 1, at < 0 ? 0 : at + (e.key === "ArrowDown" ? 1 : -1)))].focus();
+});
+// The worktrees' "answer here" switches, in a popover behind the gear: every worktree with a task
+// or a live session, each switch with its state in words; the gear is marked while one is on.
+function renderSidePop(groups) {
+  const wts = [...new Map([...groups, ...attention].map(g => [g.wt, g])).values()].sort((a, b) => a.wt - b.wt);
+  const on = wts.some(g => { const sw = switchesOf(g.wt); return sw.answers || sw.turns });
+  $("side-gear").classList.toggle("on", on);
+  setHTML($("side-pop"), wts.map(g => `<div><b>${esc(g.name)}</b>${switchesLine(g.wt)}</div>`).join(""));
+}
+const switchesOf = (wt) => { const g = lastGroups.find(x => x.wt === wt) || attention.find(x => x.wt === wt) || {}; return g.switches || { answers: !!g.answers, turns: !!g.turns } };
+// A disclosure: Escape and focus leaving it close it and give the focus back to its button.
+function disclosure(btn, pop) {
+  const close = (focus) => { pop.hidden = true; btn.setAttribute("aria-expanded", "false"); if (focus) btn.focus() };
+  btn.addEventListener("click", () => { const open = pop.hidden; pop.hidden = !open; btn.setAttribute("aria-expanded", String(open)); if (open) { const f = pop.querySelector("button, input"); if (f) f.focus() } });
+  pop.addEventListener("keydown", (e) => { if (e.key === "Escape") { e.stopPropagation(); close(true) } });
+  btn.addEventListener("keydown", (e) => { if (e.key === "Escape" && !pop.hidden) close(true) });
+  pop.addEventListener("focusout", (e) => { if (!pop.contains(e.relatedTarget) && e.relatedTarget !== btn && !$("dlg").open) close(false) });
+}
+disclosure($("side-gear"), $("side-pop"));
+// The sidebar resizes from its edge (drag, or the arrow keys on the grip), 200 to 520 px and never
+// past 60% of the window; a double click goes back to 290. The chosen width is kept apart from the
+// clamped one, so a narrow window does not shrink it for good. Collapsed, it is a rail of dots.
+const SIDE_KEY = "agent-flow-side-width", RAIL_KEY = "agent-flow-side-rail", SIDE_DEFAULT = 290;
+let sideChosen = SIDE_DEFAULT, rail = false;
+try { sideChosen = +localStorage.getItem(SIDE_KEY) || SIDE_DEFAULT; rail = localStorage.getItem(RAIL_KEY) === "1" } catch (e) {}
+const sideMax = () => Math.max(200, Math.min(520, Math.floor(window.innerWidth * 0.6)));
+function applySide() {
+  const w = Math.max(200, Math.min(sideMax(), sideChosen));
+  document.querySelector(".app").style.setProperty("--side-w", w + "px");
+  document.querySelector(".app").classList.toggle("rail", rail);
+  const g = $("side-grip");
+  g.setAttribute("aria-valuenow", String(w)); g.setAttribute("aria-valuemin", "200"); g.setAttribute("aria-valuemax", String(sideMax()));
+  $("side-collapse").textContent = rail ? "⟩" : "⟨";
+  $("side-collapse").title = t(rail ? "side.expand" : "side.collapse");
+  $("side-collapse").setAttribute("aria-label", t(rail ? "side.expand" : "side.collapse"));
+}
+function chooseSide(w) { sideChosen = Math.round(w); try { localStorage.setItem(SIDE_KEY, String(sideChosen)) } catch (e) {} applySide() }
+$("side-collapse").onclick = () => { rail = !rail; try { localStorage.setItem(RAIL_KEY, rail ? "1" : "0") } catch (e) {} applySide() };
+$("side-grip").addEventListener("pointerdown", (e) => {
+  e.preventDefault();
+  const grip = $("side-grip"), x0 = e.clientX, w0 = $("side").getBoundingClientRect().width;
+  grip.setPointerCapture(e.pointerId);
+  const move = (m) => chooseSide(Math.max(200, Math.min(sideMax(), w0 + m.clientX - x0)));
+  grip.addEventListener("pointermove", move);
+  grip.addEventListener("pointerup", () => grip.removeEventListener("pointermove", move), { once: true });
+});
+$("side-grip").addEventListener("dblclick", () => chooseSide(SIDE_DEFAULT));
+$("side-grip").addEventListener("keydown", (e) => {
+  const step = e.key === "ArrowRight" ? 16 : e.key === "ArrowLeft" ? -16 : 0;
+  if (!step) return;
+  e.preventDefault();
+  chooseSide(Math.max(200, Math.min(sideMax(), $("side").getBoundingClientRect().width + step)));
+});
+window.addEventListener("resize", applySide);
 
 function select(wt, id) {
   sel = { wt, id }; openFile = null; openBot = null;
@@ -1647,7 +1801,7 @@ function showNow(d, list, now) {
   else if (mr && mr.error && d.status !== "done") extra.push(`<span class="warn">${has("mr." + mr.error) ? t("mr." + mr.error) : t("mr.error", { error: mr.error })}</span>`);
   if (d.warning) extra.push(`<span class="bad">${has("warning." + d.warning) ? t("warning." + d.warning) : esc(d.warning)}</span>`);
   if (d.closed_by === "work.sh") extra.push(`<span class="meta">${t("closed.work.sh")}</span>`);
-  setHTML($("now"), `<div class="now ${act ? "act" : "wait"}"><div class="verb">${t(act ? "now.act" : "now.wait")}</div><div class="nowbody"><div class="nowhead">${statusBadge(s)} <span class="meta">${statusMeaning(s)}</span></div>${body}${extra.length ? `<div class="extra">${extra.join(" · ")}</div>` : ""}${switchesLine(sel.wt)}</div></div>`);
+  setHTML($("now"), `<div class="now ${act ? "act" : "wait"}"><div class="verb">${t(act ? "now.act" : "now.wait")}</div><div class="nowbody"><div class="nowhead">${statusBadge(s)} <span class="meta">${statusMeaning(s)}</span></div>${body}${extra.length ? `<div class="extra">${extra.join(" · ")}</div>` : ""}</div></div>`);
   $("now").querySelectorAll("[data-decide]").forEach(b => b.onclick = () => decideIn(+b.dataset.decide, b.dataset.id));
   if ($("clean-one")) $("clean-one").onclick = () => openCleanup(`wt=${sel.wt}&id=${encodeURIComponent(d.id)}`, false);
   if ($("close-one")) $("close-one").onclick = () => openClose(d, sel.wt);
@@ -1858,7 +2012,7 @@ function rulingHTML(r) {
 // The worktree's switches: answering questions on the page, and sending the session its next
 // message on the page. Turning one on or off asks first, saying what changes and the risk.
 function switchesLine(wt) {
-  const g = lastGroups.find(x => x.wt === wt), sw = (g && g.switches) || {};
+  const sw = switchesOf(wt);
   const one = (name) => `<button type="button" class="switch${sw[name] ? " on" : ""}" data-switch="${name}" data-wt="${wt}" data-on="${sw[name] ? 0 : 1}" title="${esc(t("switch.about." + name))}"><i></i>${t("switch.label." + name)}: <b>${t(sw[name] ? "switch.on" : "switch.off")}</b></button>`;
   return `<div class="switches"><span class="meta">${t("switch.title")}</span>${one("answers")}${one("turns")}</div>`;
 }

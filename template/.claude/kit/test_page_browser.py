@@ -203,7 +203,56 @@ def decide_step(page, ctx):
     check("decide: other question untouched", not os.path.exists(os.path.join(ctx["work"], "attention", "s-q", "main.answer.json")))
 
 
-STEPS = [needs_step, fold_step, decide_step]
+def side_width(page):
+    return page.evaluate("document.getElementById('side').getBoundingClientRect().width")
+
+
+def sidebar_step(page, ctx):
+    """One row per task, grouped only where a worktree has several; the filter on "/", the arrow
+    keys and Enter; the edge resizes within its limits and keeps the chosen width; the rail; the
+    gear's popover of switches closes on Escape and gives the focus back."""
+    ids = page.eval_on_selector_all("#tasks .task", "els => els.map(e => e.dataset.id)")
+    check("side: one row per task", sorted(ids) == ["T-DONE", "T-FIND", "T-READY"], ids)
+    check("side: grouped only with several tasks", page.locator("#tasks .wt").count() == 1
+          and page.locator('#tasks .task[data-id="T-DONE"] .sub').count() == 1)
+    page.keyboard.press("Escape")
+    page.locator("body").click(position={"x": 900, "y": 5})
+    page.keyboard.press("/")
+    check("side: / focuses the filter", page.evaluate("document.activeElement.id") == "side-filter")
+    page.keyboard.type("ready")
+    check("side: filter", page.eval_on_selector_all("#tasks .task", "els => els.map(e => e.dataset.id)") == ["T-READY"])
+    page.keyboard.press("ArrowDown")
+    page.keyboard.press("Enter")
+    page.wait_for_function("location.hash.endsWith('/T-READY')")
+    check("side: arrow and Enter open a task", True)
+    page.fill("#side-filter", "")
+    page.dispatch_event("#side-filter", "input")
+    w0 = side_width(page)
+    page.focus("#side-grip")
+    page.keyboard.press("ArrowRight")
+    check("side: grip by keyboard", abs(side_width(page) - (w0 + 16)) < 2, f"{w0} -> {side_width(page)}")
+    page.evaluate("chooseSide(500)")
+    page.set_viewport_size({"width": 760, "height": 900})
+    page.wait_for_timeout(300)
+    check("side: clamped to 60% of the window", abs(side_width(page) - 456) < 2,
+          (side_width(page), page.evaluate("[innerWidth, document.querySelector('.app').style.cssText]")))
+    page.set_viewport_size({"width": 1400, "height": 900})
+    page.wait_for_timeout(300)
+    check("side: the chosen width returns", abs(side_width(page) - 500) < 2, side_width(page))
+    page.dblclick("#side-grip")
+    check("side: double click resets", abs(side_width(page) - 290) < 2, side_width(page))
+    page.click("#side-collapse")
+    check("side: rail", side_width(page) < 60 and page.locator("#tasks .sdot.amber").count() >= 1)
+    page.click("#side-collapse")
+    page.click("#side-gear")
+    check("side: gear popover", page.locator("#side-pop").is_visible() and page.locator("#side-pop [data-switch]").count() >= 2)
+    page.keyboard.press("Escape")
+    check("side: Escape closes and returns focus", page.locator("#side-pop").is_hidden()
+          and page.evaluate("document.activeElement.id") == "side-gear",
+          (page.locator("#side-pop").is_hidden(), page.evaluate("document.activeElement.outerHTML.slice(0, 80)")))
+
+
+STEPS = [needs_step, fold_step, decide_step, sidebar_step]
 
 
 def main():
