@@ -215,10 +215,12 @@ def agents(evs, now):
             continue
         a = lanes.setdefault(e.get("agent") or "main", {
             "agent": e.get("agent") or "main", "type": e.get("type") or "main",
-            "state": "", "tools": 0, "start": e.get("t", 0)})
+            "state": "", "tools": 0, "start": e.get("t", 0), "ran": False})
         ev = e.get("ev")
         if ev == "start":
-            a.update(state="running", start=e.get("t", 0), summary=None, end=None)
+            # ran: a start event was seen, so "start" is when the agent began and not merely the
+            # first event left in the log tail; the fix round trusts only those.
+            a.update(state="running", start=e.get("t", 0), summary=None, end=None, ran=True)
         elif ev == "tool":
             # A blocked agent was sent back to write its file: a tool call means it is at it.
             if a["state"] == "blocked":
@@ -239,36 +241,70 @@ def agents(evs, now):
     return sorted(lanes.values(), key=lambda a: a["seen"], reverse=True)
 
 
+# The contract reviewer re-runs every fix round; the other lenses only when their last review had
+# findings.
+ALWAYS_RERUN = "reviewer"
+
+
 def stages(flow, tdir):
+    """Each stage of flow.json with its file state; a review also says whether it needs no re-run
+    in a fix round (`settled`: a lens other than the contract reviewer whose last review is a PASS,
+    so it had no finding to fix)."""
     out = []
     for agent, st in (flow.get("stages") or {}).items():
         text = read(os.path.join(tdir, st.get("file", "")))
         m = WORD_RX.search(text or "")
         word = m.group(1) if m else None
+        review = bool(st.get("verdict"))
+        verdict = word if review else None
         out.append({"agent": agent, "file": st.get("file"), "written": text is not None,
-                    "needs_verdict": bool(st.get("verdict")),
-                    "verdict": word if st.get("verdict") else None, "status": None if st.get("verdict") else word,
-                    "open": len(MARKER_RX.findall(text or ""))})
+                    "needs_verdict": review, "verdict": verdict, "status": None if review else word,
+                    "open": len(MARKER_RX.findall(text or "")),
+                    "settled": review and agent != ALWAYS_RERUN and verdict == "PASS"})
     return out
 
 
 def status(stage_list, lanes, tdir=None):
-    """FAIL > findings | ready-for-mr > blocked > clarify > running > the last stage written.
-    "done" is not here: only a PR/MR, a merge or `work.sh done` closes a task (task_state). A stage let through on the retry with its gate failed is FAIL, as `work.sh
+    """FAIL > findings | fixing | ready-for-mr > blocked > clarify > running > the last stage
+    written. "done" is not here: only a PR/MR, a merge or `work.sh done` closes a task
+    (task_state). A stage let through on the retry with its gate failed is FAIL, as `work.sh
     status` says."""
     verdicts = [s for s in stage_list if s["needs_verdict"]]
     # Only the latest run of each stage counts: a re-run that passed the gate clears the old one.
     latest = {}
     for a in sorted(lanes, key=lambda a: a["seen"]):
         latest[a["type"]] = a
-    if any(s["verdict"] == "FAIL" for s in stage_list) or any(a["state"] == "failed" for a in latest.values()):
+    if any(a["state"] == "failed" for a in latest.values()):
+        return "FAIL"
+    header = (read(os.path.join(tdir, "findings-decision.md"), 200) or "").startswith("Decided:") if tdir else False
+    if any(s["verdict"] == "FAIL" for s in stage_list):
+        # A FAIL waits on the dev while its findings are undecided, and comes back when a re-review
+        # fails again (the new review reopens the decision). Decided, with a fix pending or a flow
+        # agent at work, it is the fix round: the page said FAIL while the executor fixed.
+        failed = [s for s in verdicts if s["verdict"] == "FAIL" and s["written"]]
+        items = decided_findings(tdir, stage_list)
+        if items and header and not any(f["decision"] is None for f in items) and findings_decided(tdir, failed) and (
+                any(f["state"] == "fix-pending" for f in items) or flow_agent_running(stage_list, lanes)):
+            return "fixing"
         return "FAIL"
     if verdicts and all(s["verdict"] for s in verdicts):
         # Decided means every finding the page shows has a decision line, not only that a
         # decision file is newer than the reviews: one line must not settle three findings.
-        if any(s["verdict"] == "PASS_WITH_FINDINGS" for s in verdicts) and not (
-                findings_decided(tdir, verdicts) and not any(f["decision"] is None for f in decided_findings(tdir, stage_list))):
+        with_findings = any(s["verdict"] == "PASS_WITH_FINDINGS" for s in verdicts)
+        items = decided_findings(tdir, stage_list) if with_findings else []
+        if with_findings and not (findings_decided(tdir, verdicts) and not any(f["decision"] is None for f in items)):
             return "findings"
+        # A fix round is not ready for a PR/MR: a finding decided fix and not yet fixed, an agent
+        # of the flow at work, or a stage whose file an earlier stage's agent will rewrite (the
+        # page read ready-for-mr while the executor of the fix round ran).
+        why = fix_round(stage_list, lanes, tdir, items)
+        if why in ("pending", "agent"):
+            return "fixing"
+        if why == "stale":
+            # Every fix is in and nothing runs, but a lens has not re-read the round's work: the
+            # task is paused before its reviews, as the terminal shows, not running.
+            before = [s["agent"] for s in stage_list if not s["needs_verdict"] and s["written"] and s["agent"] != "retrospective"]
+            return before[-1] if before else "fixing"
         return "ready-for-mr"
     # Only subagents can be blocked: agents() sets main to running or idle.
     if any(a["state"] == "blocked" for a in lanes) or any(s["status"] in ("BLOCKED", "NEEDS_CONTEXT") for s in stage_list):
@@ -279,6 +315,40 @@ def status(stage_list, lanes, tdir=None):
         return "running"
     written = [s["agent"] for s in stage_list if s["written"]]
     return written[-1] if written else "purpose"
+
+
+def flow_agent_running(stage_list, lanes):
+    """An agent of a flow stage at work: a general-purpose subagent the session runs for itself
+    is no stage of the task and does not hold it."""
+    types = {s["agent"] for s in stage_list}
+    return any(a["type"] in types and a["state"] == "running" for a in lanes)
+
+
+def fix_round(stage_list, lanes, tdir, items):
+    """Why the task is not ready for a PR/MR after its reviews, or None: "pending" while a finding
+    decided fix is not fixed, "agent" while a flow agent runs, "stale" when a stage file is older
+    than the start of an agent of an earlier stage before the reviews (that round will write it
+    again)."""
+    if any(f["state"] == "fix-pending" for f in items):
+        return "pending"
+    if flow_agent_running(stage_list, lanes):
+        return "agent"
+    since = 0.0
+    for s in stage_list:
+        # A lens with no finding in its last review is not re-run by the fix round: its file being
+        # older than the round is no sign of a review to come.
+        if s.get("settled") or s["agent"] == "retrospective":
+            continue
+        if s.get("file") and s["written"] and tdir:
+            written = (mtime_ns(os.path.join(tdir, s["file"])) or 0) / 1e9
+            if written < since:
+                return "stale"
+        # Only the stages before the reviews move the mark: lenses run side by side, and one
+        # lens re-run alone says nothing about the others.
+        if not s["needs_verdict"]:
+            starts = [a.get("start") or 0 for a in lanes if a["type"] == s["agent"] and a.get("ran")]
+            since = max([since, *starts])
+    return None
 
 
 def mtime_ns(path):
@@ -307,7 +377,7 @@ STEP_OF_STAGE = {"refiner": "contract", "executor": "change", "tester": "proof"}
 def next_step(st, stage_list):
     """A key, not prose: the page says it in the dev's language."""
     fixed = {"done": "clean-up", "FAIL": "fix-fail", "findings": "decide-findings", "clarify": "clarify",
-             "ready-for-mr": "open-mr", "blocked": "unblock", "running": "wait"}
+             "ready-for-mr": "open-mr", "blocked": "unblock", "running": "wait", "fixing": "wait-fixes"}
     if st in fixed:
         return fixed[st]
     # The retrospective runs after the reviews: it is never the next step before them.

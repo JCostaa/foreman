@@ -246,6 +246,8 @@ def main():
     attention_server()
     wiring()
     closing_status()
+    fix_round_status()
+    partial_rerun_status()
     closing_mr()
     mr_fetch_http()
     work_done()
@@ -901,6 +903,120 @@ def load_dashboard(name):
 
 
 REVIEWS = ("04-review-contract.md", "04-review-security.md", "04-review-qa.md", "04-review-product.md")
+
+
+def fix_round_status():
+    """A fix round never reads ready-for-mr: the page said ready-for-mr while the executor of the
+    fix round ran, and the dev nearly opened the PR. Ready only once every fix is marked fixed,
+    nothing of the flow runs and the lenses wrote after the round's agents started. Only an agent
+    whose type is a stage of flow.json holds the task."""
+    d = load_dashboard("dash_fix_round")
+    base = tempfile.mkdtemp()
+    try:
+        tdir = os.path.join(base, "T-1")
+        os.makedirs(tdir)
+        flow = json.load(open(FLOW))
+        s0 = 1_700_000_000
+
+        def put(name, text, t):
+            open(os.path.join(tdir, name), "w").write(text)
+            os.utime(os.path.join(tdir, name), (t, t))
+        for i, f in enumerate(("01-contract.md", "02-change.md", "03-proof.md")):
+            put(f, "x\n", s0 + i)
+        for f in REVIEWS:
+            put(f, "Verdict: PASS_WITH_FINDINGS\n\n## Findings\n- [high] the hold drops the answer\n", s0 + 10)
+        keys = [x["key"] for x in d.decided_findings(tdir, d.stages(flow, tdir))]
+        lens = lambda f: f[len("04-review-"):-3]
+        put("findings-decision.md", "Decided: 2026-11-17\n" + "".join(
+            f"- fix high {lens(f)} [{k}]: the hold drops the answer\n" for f, k in zip(REVIEWS, keys)), s0 + 20)
+        executor = lambda state, start: {"agent": "e2", "type": "executor", "state": state, "start": start, "ran": True,
+                                         "seen": start + 5, "tools": 3}
+        state = lambda lanes: d.task_state(d.stages(flow, tdir), lanes, tdir, None)
+        got = state([executor("running", s0 + 30)])
+        assert got["status"] == "fixing" and got["next_step"] == "wait-fixes", \
+            f"a decided fix with a running executor is a fix round, not ready for a PR/MR: {got}"
+        assert state([])["status"] == "fixing", "a finding still fix-pending is a fix round even with no agent seen"
+        # The executor marks the fixes; the lenses have not re-run since it started.
+        text = open(os.path.join(tdir, "findings-decision.md")).read().replace("- fix high", "- fixed high")
+        put("findings-decision.md", text, s0 + 60)
+        done = executor("ok", s0 + 30)
+        got = state([done])
+        assert got["status"] == "tester" and got["next_step"] == "reviews", \
+            f"fixed and nothing runs, the lens files older than the round's executor: paused after the tester: {got}"
+        put("02-change.md", "x\n", s0 + 70)
+        put("03-proof.md", "x\n", s0 + 80)
+        assert state([done])["status"] == "tester", "the proof is new, the lens files still older than the round"
+        for f in REVIEWS:
+            put(f, "Verdict: PASS\n", s0 + 90)
+        got = state([done])
+        assert got["status"] == "ready-for-mr" and got["next_step"] == "open-mr", f"all fixed and lenses re-run: {got}"
+        assert state([done, {**executor("running", s0 + 100), "agent": "r3", "type": "reviewer"}])["status"] == "fixing", \
+            "a flow agent running (a lens re-running alone) is never ready for a PR/MR"
+        helper = {**executor("running", s0 + 100), "agent": "g1", "type": "general-purpose"}
+        assert state([done, helper])["status"] == "ready-for-mr", "a subagent of no flow stage does not hold the task"
+
+        # A FAIL during its fix round: the page said FAIL while the executor fixed.
+        put("04-review-product.md", "Verdict: FAIL\n\n## Findings\n- [high] the export drops rows\n", s0 + 200)
+        assert state([])["status"] == "FAIL", "a FAIL with its finding undecided waits on the dev"
+        items = d.decided_findings(tdir, d.stages(flow, tdir))
+        fail_key = next(f["key"] for f in items if f["lens"] == "product")
+        put("findings-decision.md", open(os.path.join(tdir, "findings-decision.md")).read()
+            + f"- fix high product [{fail_key}]: the export drops rows\n", s0 + 210)
+        got = state([executor("running", s0 + 220)])
+        assert got["status"] == "fixing" and got["next_step"] == "wait-fixes", f"a decided FAIL being fixed is the fix round: {got}"
+        assert state([])["status"] == "fixing", "decided, its fix still pending: the fix round too"
+        put("04-review-product.md", "Verdict: FAIL\n\n## Findings\n- [high] the export still drops rows\n", s0 + 300)
+        assert state([executor("ok", s0 + 220)])["status"] == "FAIL", "a re-review that fails again shows FAIL"
+    finally:
+        shutil.rmtree(base)
+
+
+def partial_rerun_status():
+    """The fix round re-runs the contract reviewer and only the lenses that had findings. A lens
+    whose last review had no finding (a PASS) and is older than the round needs no re-run: the
+    task is ready for its PR/MR once the others re-ran. The contract reviewer is never settled."""
+    d = load_dashboard("dash_partial_rerun")
+    base = tempfile.mkdtemp()
+    try:
+        tdir = os.path.join(base, "T-1")
+        os.makedirs(tdir)
+        flow = json.load(open(FLOW))
+        s0 = 1_700_000_000
+
+        def put(name, text, t):
+            open(os.path.join(tdir, name), "w").write(text)
+            os.utime(os.path.join(tdir, name), (t, t))
+        for i, f in enumerate(("01-contract.md", "02-change.md", "03-proof.md")):
+            put(f, "x\n", s0 + i)
+        finding = "Verdict: PASS_WITH_FINDINGS\n\n## Findings\n- [high] the hold drops the answer\n"
+        put("04-review-contract.md", "Verdict: PASS\n\n## Findings\n- none\n", s0 + 10)
+        put("04-review-security.md", "Verdict: PASS\n\n## Findings\n- none\n", s0 + 10)
+        put("04-review-qa.md", "Verdict: PASS\n\n## Findings\n- none\n", s0 + 10)
+        put("04-review-product.md", finding, s0 + 10)
+        st = d.stages(flow, tdir)
+        by = {x["file"]: x for x in st}
+        assert by["04-review-qa.md"]["settled"] and by["04-review-security.md"]["settled"] \
+            and not by["04-review-product.md"]["settled"] and not by["04-review-contract.md"]["settled"], \
+            f"settled: the lenses with no finding, never the contract reviewer, PASS as it is: {st}"
+        keys = {x["lens"]: x["key"] for x in d.decided_findings(tdir, st)}
+        put("findings-decision.md", "Decided: 2026-11-18\n" + "".join(
+            f"- fixed high {lens} [{k}]: the hold drops the answer\n" for lens, k in keys.items()), s0 + 60)
+        done = {"agent": "e2", "type": "executor", "state": "ok", "start": s0 + 30, "ran": True, "seen": s0 + 35, "tools": 3}
+        state = lambda: d.task_state(d.stages(flow, tdir), [done], tdir, None)
+        put("02-change.md", "x\n", s0 + 70)
+        put("03-proof.md", "x\n", s0 + 80)
+        assert state()["status"] == "tester", "nothing re-ran yet: paused before the reviews"
+        put("04-review-product.md", "Verdict: PASS\n", s0 + 90)
+        assert state()["status"] == "tester", "the contract reviewer always re-runs: still paused before it"
+        put("04-review-contract.md", "Verdict: PASS\n", s0 + 95)
+        got = state()
+        assert got["status"] == "ready-for-mr", \
+            f"the lenses with findings re-ran; qa and security, clean and older than the round, need no re-run: {got}"
+        # Control: the same old qa file, had it carried a finding, would hold the round.
+        put("04-review-qa.md", finding, s0 + 10)
+        assert state()["status"] != "ready-for-mr", "a lens with a finding older than the round is not settled"
+    finally:
+        shutil.rmtree(base)
 
 
 def closing_status():
@@ -1850,7 +1966,8 @@ def findings_view():
             "- accepted medium security: y\n- fix low security: z\n", t0 + 10**9)
         got = view()
         assert got["findings_open"] == 0 and got["findings_reason"] is None \
-            and d.status(d.stages(flow, tdir), [], tdir) == "ready-for-mr", got
+            and d.status(d.stages(flow, tdir), [], tdir) == "fixing", \
+            f"every finding decided, two of them fix-pending: the fix round, never ready for a PR/MR: {got}"
         put("04-review-security.md", "Verdict: PASS_WITH_FINDINGS\n\n## Findings\n- [medium] again\n", t0 + 2 * 10**9)
         got = view()
         assert got["findings_reason"] == "review-newer" and got["findings_review_newer"] == ["security"], got
