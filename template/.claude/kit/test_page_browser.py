@@ -177,7 +177,33 @@ def fold_step(page, ctx):
     check("fold: no answer row", not any("s-fold" in r for r in rows(page, "answer")), rows(page, "answer"))
 
 
-STEPS = [needs_step, fold_step]
+def decide_step(page, ctx):
+    """Findings are decided in one place: "Decide in Steps" opens the steps view at the finding,
+    shown whole; Fix stages a choice and writes nothing; "Send 1 decision(s)" writes its line, and
+    with every finding decided the folded "Findings <ID>:" question gets its free-text answer."""
+    dec = os.path.join(ctx["work"], "T-FIND", "findings-decision.md")
+    page.click('#needs [data-row^="find/"] [data-decide]')
+    f = page.locator("#tree .finding.needs-you")
+    f.wait_for()
+    check("decide: steps view", page.locator("#tree").is_visible() and "the security detail line" in f.inner_text(), f.inner_text())
+    f.locator('[data-stage="fix"]').click()
+    page.wait_for_selector('#tree [data-stage="fix"][aria-pressed="true"]')
+    check("decide: staged, nothing written", not os.path.exists(dec))
+    page.click("#tree [data-send-decisions]")
+    page.wait_for_selector("#tree [data-told], #tree [data-tell]")
+    text = open(dec).read()
+    check("decide: line written", text.startswith("Decided:") and "- fix medium security [" in text, text)
+    answer = os.path.join(ctx["work"], "attention", "s-fold", "main.answer.json")
+    for _ in range(50):
+        if os.path.exists(answer):
+            break
+        time.sleep(0.1)
+    got = json.load(open(answer)) if os.path.exists(answer) else {}
+    check("decide: folded question answered", (got.get("answers") or [{}])[0].get("other", "").startswith("findings decided on the dashboard for T-FIND"), got)
+    check("decide: other question untouched", not os.path.exists(os.path.join(ctx["work"], "attention", "s-q", "main.answer.json")))
+
+
+STEPS = [needs_step, fold_step, decide_step]
 
 
 def main():

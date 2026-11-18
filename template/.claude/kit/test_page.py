@@ -164,17 +164,22 @@ def office(page):
 
 
 def findings_panel(page):
-    """Each finding shows lens, severity, text, state and who acts; only an open finding that
-    waits on the dev offers fix or accept, posted one at a time with its key."""
+    """Each finding shows lens, severity, its whole text, state and who acts; only an open finding
+    that waits on the dev offers Fix or Accept, which stage a choice; one "Send N decisions" posts
+    each with its key. A dismissed alert hides and comes back."""
     code = script(page)
-    f = code[code.index("function findingRow"):code.index("let tab = ")]
+    f = code[code.index("function findingRow"):code.index("function decisionsBar")]
     for part in ("esc(lensName(x.lens))", 't("sev." + x.severity)', "esc(x.full_text || x.summary)", 't("fstate." + x.view)', "who(x)"):
         assert part in f, f"a finding lacks {part}"
     assert 'x.view === "needs-you" && x.state === "open"' in f, "only an open finding that waits on the dev offers a choice"
-    assert 'post("api/findings-decision", { wt: sel.wt, id: d.id, key, decision })' in f, "a decision is posted with the finding's key"
-    w = code[code.index("function wireFindings"):code.index("let tab = ")]
-    assert w.index('$("decide-go").onclick') < w.index('post("api/findings-decision"') and w.count('post("api/findings-decision"') == 1, \
-        "a finding is decided only from the confirmation"
+    w = code[code.index("function wireFindings"):code.index("async function tellDecided")]
+    assert 'post("api/findings-decision"' not in w[:w.index("async function sendDecisions")], "Fix and Accept only stage a choice"
+    assert 'post("api/findings-decision", { wt, id: d.id, key: x.key, decision })' in w, "Send posts each choice with its key"
+    assert "staged.delete(stageKey(d, x));" in w and w.index("if (r.ok)") < w.index("staged.delete(stageKey(d, x));"), \
+        "only a choice that landed leaves the staged set"
+    tell = code[code.index("async function tellDecided"):code.index("let tab = ")]
+    assert ".filter(a => findingsAsk(a, d.id))" in tell, "only the findings ask itself is answered"
+    assert 'kind: "findings-decided", id: d.id' in tell, "a turn gets the server's message"
     assert "dismissed.delete(b.dataset.restore)" in code and "if (dismissed.has(akey(a))) return;" in code, "a dismissed alert hides and comes back"
 
 
@@ -363,12 +368,14 @@ MUTATIONS = (
     (tree, "no you-are-here", lambda p: p.replace('const here = i === now ? `<span class="you">', 'const here = false ? `<span class="you">')),
     (office, "QA has no desk", lambda p: p.replace('"security-reviewer", "qa-reviewer", "product-reviewer"] }', '"security-reviewer", "product-reviewer"] }')),
     (office, "custom agents unnamed", lambda p: p.replace("String(pick(agentCfg(a).label) || a)", "String(a)")),
-    (findings_panel, "choice on every finding", lambda p: p.replace('x.view === "needs-you" && x.state === "open"', "true")),
-    (findings_panel, "who acts dropped", lambda p: p.replace('<div class="factor">${who(x)}</div>', "")),
+    (findings_panel, "choice on every finding", lambda p: p.replace('const choose = x.view === "needs-you" && x.state === "open"', "const choose = true")),
+    (findings_panel, "posted on the click", lambda p: p.replace("staged.get(k) === b.dataset.stage ? staged.delete(k) : staged.set(k, b.dataset.stage);", 'post("api/findings-decision", { wt: sel.wt, id: d.id, key: x.key, decision: b.dataset.stage });')),
+    (findings_panel, "failed choice dropped", lambda p: p.replace("      if (r.ok) {\n        ok++;\n        staged.delete(stageKey(d, x));", "      staged.delete(stageKey(d, x));\n      if (r.ok) {\n        ok++;")),
+    (findings_panel, "tells every held ask", lambda p: p.replace(".filter(a => findingsAsk(a, d.id))", ".filter(a => a.held)")),
+    (findings_panel, "who acts dropped", lambda p: p.replace('<div class="factor">${who(x)}</div>${choose}', "${choose}")),
     (noise_collapsed, "events open", lambda p: p.replace('<details id="events">', '<details id="events" open>')),
     (cleanup_wiring, "plan hash not sent", lambda p: p.replace("plan: cleanPlan.plan })", "plan: null })")),
     (preferences, "theme outside try", lambda p: p.replace('try { theme = ["light", "dark", "system"].includes(localStorage.getItem(THEME_KEY)) ? localStorage.getItem(THEME_KEY) : "dark" } catch (e) {}', 'theme = localStorage.getItem(THEME_KEY);')),
-    (findings_panel, "decided on the first click", lambda p: p.replace('  const decide = (b, key, decision) => {\n', '  const decide = (b, key, decision) => {\n    post("api/findings-decision", { wt: sel.wt, id: d.id, key, decision });\n')),
     (findings_panel, "dismissed alerts not restorable", lambda p: p.replace("dismissed.delete(b.dataset.restore); saveDismissed()", "dismissed.add(b.dataset.restore); saveDismissed()")),
     (released_holds, "released question disabled", lambda p: p.replace('${a.held || a.released ? "" : " disabled"}', '${a.held ? "" : " disabled"}')),
     (released_holds, "released turn silent", lambda p: p.replace("    : a.released ? goneHTML(a, n)\n    : a.turns", "    : a.turns")),

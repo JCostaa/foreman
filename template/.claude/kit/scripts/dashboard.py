@@ -1701,6 +1701,9 @@ def valid_picks(questions, picks):
     return True
 
 
+FINDINGS_DECIDED = "findings decided on the dashboard for {id}: read findings-decision.md and go on"
+
+
 def answer(root, body, now=None):
     """(status, message). Writes <agent>.answer.json or <agent>.release next to a question the
     hook is holding right now; anything else writes nothing."""
@@ -1728,7 +1731,14 @@ def answer(root, body, now=None):
             return 400, "behavior must be allow or deny"
         target, content = base + ".answer.json", json.dumps({"qid": qid, "behavior": body["behavior"], "via": "web"})
     elif a["kind"] == "turn":
-        message = body.get("message")
+        if body.get("kind") is not None:
+            # A message the server builds, never one the page wrote: the findings decided.
+            tid = body.get("id")
+            if body.get("kind") != "findings-decided" or not isinstance(tid, str) or not ID_RX.fullmatch(tid):
+                return 400, "kind findings-decided and a task id"
+            message = FINDINGS_DECIDED.format(id=tid)
+        else:
+            message = body.get("message")
         if not isinstance(message, str) or not message.strip() or len(message) > MAX_OTHER:
             return 400, "message must be a non-empty text of at most 4000 characters"
         target, content = base + ".answer.json", json.dumps({"qid": qid, "message": message, "via": "web"})

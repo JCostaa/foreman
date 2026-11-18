@@ -119,8 +119,9 @@ review lens.
 ## 6. Fix loop
 
 Each finding carries `[route: refiner|executor|tester]`. Send critical and important findings
-back to that stage with the finding text, then re-run only the lenses that raised them, on a
-fresh `review-package`. Minor findings go to the dev's list, not to a round.
+back to that stage with the finding text, then re-run the contract reviewer and the lenses whose
+last review had findings, on a fresh `review-package` (a lens whose last review was a PASS is
+not required again). Minor findings go to the dev's list, not to a round.
 
 After `max_fix_rounds` executor rounds (flow.json, default 3) the hook refuses another one:
 take the open findings to the dev with your recommendation.
@@ -139,11 +140,14 @@ about those findings again.
 
 1. Read the review files and list every finding: severity plus one line, the ones you
    recommend fixing first, each of their labels ending in "(Recommended)".
-2. Ask with `AskUserQuestion`, `multiSelect: true`, one option per finding. The tool takes at
-   most 4 options per question: with more than 4 findings, split them across questions (up to
-   4 per call, more calls if needed) so none is dropped; a finding left off the list is not
-   "accepted", it was never seen. The question can be answered from the dashboard when web
-   answers are on.
+2. Ask with `AskUserQuestion`, `multiSelect: true`, one option per finding, each question's text
+   starting with exactly `Findings <ID>:`. The tool takes at most 4 options per question: with
+   more than 4 findings, split them across questions (up to 4 per call, more calls if needed) so
+   none is dropped; a finding left off the list is not "accepted", it was never seen. On the
+   dashboard this question folds into the task's Decide row and the dev decides in the steps
+   view, which answers it once every finding is decided. When the dev prefers the dashboard, end
+   your turn instead with exactly `Decide the findings of <ID> in the dashboard's Steps (or answer
+   here).` and nothing else: only that whole message folds into the Decide row.
 3. The checked findings go to the stage their route names, then the lenses again (step 6); the
    unchecked ones are recorded as accepted in `00-purpose.md`, under "Decisions from the
    interview", with the date and the dev's reason when given.

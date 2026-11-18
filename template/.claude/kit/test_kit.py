@@ -267,6 +267,7 @@ def main():
     page_visibility()
     alert_text()
     turn_awaits()
+    findings_decided_message()
     language_hook()
     rooms_and_agents()
     switches()
@@ -2637,6 +2638,27 @@ def turn_awaits():
                   open(os.path.join(w, "attention", "s2", "main.json"), "w"))
         got = {a["session"]: a for a in d.list_attention(root)[0]["alerts"]}
         assert got["s2"]["awaits"] and got["s2"]["idle"], got["s2"]
+    finally:
+        shutil.rmtree(root)
+
+
+def findings_decided_message():
+    """A held turn told that the findings are decided gets the server's own message, never one the
+    page built; any other kind or a bad task id is refused and writes nothing."""
+    d = load_dashboard("dash_decided_msg")
+    root = kit_root()
+    try:
+        sdir = os.path.join(root, ".work", "attention", "s1")
+        os.makedirs(sdir)
+        json.dump({"kind": "turn", "since": time.time(), "detail": "x", "qid": "Q1", "held": True, "heartbeat": time.time()},
+                  open(os.path.join(sdir, "main.json"), "w"))
+        body = {"wt": 0, "session": "s1", "agent": "main", "qid": "Q1"}
+        assert d.answer(root, {**body, "kind": "anything", "id": "T-1"})[0] == 400
+        assert d.answer(root, {**body, "kind": "findings-decided", "id": "../x"})[0] == 400
+        assert not os.path.exists(os.path.join(sdir, "main.answer.json")), "a refused body writes nothing"
+        assert d.answer(root, {**body, "kind": "findings-decided", "id": "T-1", "message": "rm -rf /"})[0] == 200
+        got = json.load(open(os.path.join(sdir, "main.answer.json")))
+        assert got["message"] == d.FINDINGS_DECIDED.format(id="T-1"), got
     finally:
         shutil.rmtree(root)
 

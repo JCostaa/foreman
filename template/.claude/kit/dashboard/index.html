@@ -141,6 +141,7 @@
   .kids { margin:2px 0 6px 30px; display:grid; gap:6px } .kids.fsum { display:flex; flex-wrap:wrap } .tree pre.file { margin:4px 0 8px 30px }
   .finding { background:var(--card); border:1px solid var(--line); border-left:3px solid var(--line); border-radius:4px; padding:6px 10px }
   .finding.needs-you { border-left-color:var(--warn) } .finding.agent, .finding.fixing { border-left-color:var(--run) } .finding.fixed, .finding.accepted { border-left-color:var(--ok); opacity:.8 }
+  .finding [aria-pressed="true"] { border-color:var(--accent); color:var(--accent); font-weight:700 }
   .finding .fhead { display:flex; gap:8px; align-items:baseline; flex-wrap:wrap } .finding .fstate { margin-left:auto }
   /* the office, a floor plan */
   .plan { overflow-x:auto } .floor { position:relative; min-width:760px; max-width:1040px; margin:0 auto; aspect-ratio:1000/600; border-radius:8px; overflow:hidden; border:1px solid var(--line) }
@@ -486,11 +487,6 @@ const I18N = /* i18n:begin */{
   "next.fix-loop": "Nothing to do: the fix loop is on the failed review (see Findings), then the review runs again.",
   "brand.credit": "Foreman by Yan Tadeu · Apache-2.0",
   "brand.sub": "agent operations console",
-  "decide.accepted.m": "Writes \"accepted\" for this finding in findings-decision.md. The finding moves to \"Accepted\" and is not fixed.",
-  "decide.confirm": "Confirm",
-  "decide.fix.m": "Writes \"fix\" for this finding in findings-decision.md. The finding moves to \"Agent fixing\", and the agent fixes it in the next fix round.",
-  "decide.title.accepted": "Accept this finding?",
-  "decide.title.fix": "Fix this finding?",
   "decision.recorded": "Decision recorded. The session in {wt} applies it on its next message there: send it the message below, or start a session with the second command.",
   "dismiss": "Dismiss this alert",
   "dismiss.restore": "Show again",
@@ -611,7 +607,13 @@ const I18N = /* i18n:begin */{
   "needs.findings.go": "Decide in Steps",
   "needs.waiting-decision": "the session is waiting for this decision",
   "needs.open": "Open",
-  "needs.mine": "{n} item(s) of this worktree wait under Needs you."
+  "needs.mine": "{n} item(s) of this worktree wait under Needs you.",
+  "decide.send": "Send {n} decision(s)",
+  "decide.ok": "{decision}: {summary}",
+  "decide.refused": "Not recorded: {summary}",
+  "decide.done": "{ok} of {n} recorded.",
+  "decide.told": "The session waiting for this decision was told to go on.",
+  "decide.tell": "Every finding is decided. No session holds the question for the page: send it this message."
  },
  "pt": {
   "lang.button": "PT / EN",
@@ -880,11 +882,6 @@ const I18N = /* i18n:begin */{
   "next.fix-loop": "Nada a fazer: a rodada de correção está cuidando da revisão reprovada (veja Achados), e depois a revisão roda de novo.",
   "brand.credit": "Foreman, por Yan Tadeu · Apache-2.0",
   "brand.sub": "console de operação dos agentes",
-  "decide.accepted.m": "Grava \"accepted\" para este achado em findings-decision.md. O achado vai para \"Aceitos\" e não é corrigido.",
-  "decide.confirm": "Confirmar",
-  "decide.fix.m": "Grava \"fix\" para este achado em findings-decision.md. O achado vai para \"Agente corrigindo\", e o agente corrige na próxima rodada de correção.",
-  "decide.title.accepted": "Aceitar este achado?",
-  "decide.title.fix": "Corrigir este achado?",
   "decision.recorded": "Decisão registrada. A sessão em {wt} aplica na próxima mensagem lá: mande nela a mensagem abaixo, ou abra uma sessão com o segundo comando.",
   "dismiss": "Dispensar este alerta",
   "dismiss.restore": "Mostrar de novo",
@@ -1005,7 +1002,13 @@ const I18N = /* i18n:begin */{
   "needs.findings.go": "Decidir em Etapas",
   "needs.waiting-decision": "a sessão espera esta decisão",
   "needs.open": "Abrir",
-  "needs.mine": "{n} item(ns) deste worktree esperam em Precisa de você."
+  "needs.mine": "{n} item(ns) deste worktree esperam em Precisa de você.",
+  "decide.send": "Enviar {n} decisão(ões)",
+  "decide.ok": "{decision}: {summary}",
+  "decide.refused": "Não registrado: {summary}",
+  "decide.done": "{ok} de {n} registradas.",
+  "decide.told": "A sessão que esperava esta decisão foi avisada para seguir.",
+  "decide.tell": "Todo achado está decidido. Nenhuma sessão retém a pergunta para a página: mande esta mensagem a ela."
  }
 }/* i18n:end */;
 // Statuses dashboard.py returns by name; any other status is the agent of the last stage written.
@@ -1659,29 +1662,69 @@ function who(x) {
     : x.view === "fixed" ? t("fstate.fixed.m") : x.view === "accepted" ? t("fstate.accepted.m")
     : t(x.reopened ? "fstate.reopened.m" : x.verdict === "FAIL" ? "fstate.capped.m" : "fstate.needs-you.m");
 }
+// Fix and Accept stage a choice in the page, nothing posted; one "Send N decisions" posts each,
+// says per finding what landed or why it was refused, and keeps every choice that did not land.
+// A finding decided elsewhere meanwhile (a session, another tab) drops its choice.
+const staged = new Map();
+let decideReport = null;
+const stageKey = (d, x) => d.worktree + "/" + d.id + "/" + x.key;
+const stagedOf = (d) => (d.findings || []).filter(x => x.view === "needs-you" && x.state === "open" && staged.has(stageKey(d, x))).map(x => ({ x, decision: staged.get(stageKey(d, x)) }));
 function findingRow(x) {
+  const d = lastTask || {};
   const sev = `<span class="sev ${esc(x.severity)}">${has("sev." + x.severity) ? t("sev." + x.severity) : esc(x.severity)}</span>`;
   const choose = x.view === "needs-you" && x.state === "open"
-    ? `<div class="actions"><button class="primary" data-fix="${esc(x.key)}">${t("fpick.fix", { agent: roleName(x.route || "executor") })}</button><button data-accept="${esc(x.key)}">${t("fpick.accept")}</button></div>` : "";
-  return `<div class="finding ${esc(x.view)}"><div class="fhead">${sev}<span class="ftext">${esc(lensName(x.lens))}: ${esc(x.full_text || x.summary)}</span><span class="fstate ${esc(x.view)}">${t("fstate." + x.view)}</span></div>${x.details ? `<div class="fdetail">${esc(x.details)}</div>` : ""}<div class="factor">${who(x)}</div>${choose}</div>`;
+    ? `<div class="actions">${["fix", "accepted"].map(c => `<button type="button" data-stage="${c}" data-key="${esc(x.key)}" aria-pressed="${staged.get(stageKey(d, x)) === c}">${c === "fix" ? t("fpick.fix", { agent: roleName(x.route || "executor") }) : t("fpick.accept")}</button>`).join("")}</div>` : "";
+  return `<div class="finding ${esc(x.view)}" data-finding="${esc(x.key)}"><div class="fhead">${sev}<span class="ftext">${esc(lensName(x.lens))}: ${esc(x.full_text || x.summary)}</span><span class="fstate ${esc(x.view)}">${t("fstate." + x.view)}</span></div>${x.details ? `<div class="fdetail">${esc(x.details)}</div>` : ""}<div class="factor">${who(x)}</div>${choose}</div>`;
+}
+function decisionsBar(d) {
+  const picks = stagedOf(d), report = decideReport && decideReport.task === d.worktree + "/" + d.id ? decideReport.html : "";
+  return (picks.length ? `<div class="actions"><button type="button" class="primary" data-send-decisions>${t("decide.send", { n: picks.length })}</button></div>` : "") + report;
 }
 function wireFindings(box, d) {
-  const decide = (b, key, decision) => {
-    const f = (d.findings || []).find(x => x.key === key) || {};
-    const dlg = $("dlg");
-    dlg.innerHTML = `<h3>${t("decide.title." + decision)}</h3><div class="ftext">${esc(lensName(f.lens))}: ${esc(f.summary)}</div>
-      <div class="meta">${t("decide." + decision + ".m")}</div><div id="decide-msg"></div>
-      <div class="actions"><button class="primary" id="decide-go">${t("decide.confirm")}</button><button data-close>${t("clean.cancel")}</button></div>`;
-    if (!dlg.open) dlg.showModal();
-    dlg.querySelector("[data-close]").onclick = () => dlg.close();
-    $("decide-go").onclick = async () => {
-      $("decide-go").disabled = true;
-      const r = await post("api/findings-decision", { wt: sel.wt, id: d.id, key, decision });
-      if (r.ok) { dlg.close(); tick() } else { $("decide-msg").innerHTML = await errorText(r); $("decide-go").disabled = false }
-    };
-  };
-  box.querySelectorAll("[data-fix]").forEach(b => b.onclick = () => decide(b, b.dataset.fix, "fix"));
-  box.querySelectorAll("[data-accept]").forEach(b => b.onclick = () => decide(b, b.dataset.accept, "accepted"));
+  box.querySelectorAll("[data-stage]").forEach(b => b.onclick = () => {
+    const x = (d.findings || []).find(f => f.key === b.dataset.key);
+    if (!x) return;
+    const k = stageKey(d, x);
+    staged.get(k) === b.dataset.stage ? staged.delete(k) : staged.set(k, b.dataset.stage);
+    showTask();
+  });
+  box.querySelectorAll("[data-send-decisions]").forEach(b => b.onclick = () => sendDecisions(d, sel.wt, b));
+}
+async function sendDecisions(d, wt, btn) {
+  const picks = stagedOf(d);
+  if (!picks.length || btn.disabled) return;
+  btn.disabled = true;
+  const task = d.worktree + "/" + d.id, lines = [];
+  let ok = 0;
+  for (const { x, decision } of picks) {
+    try {
+      const r = await post("api/findings-decision", { wt, id: d.id, key: x.key, decision });
+      if (r.ok) {
+        ok++;
+        staged.delete(stageKey(d, x));
+        lines.push(`<div class="ok">✓ ${t("decide.ok", { decision: t(decision === "fix" ? "finding.fix" : "finding.accept"), summary: x.summary })}</div>`);
+      } else lines.push(`<div class="bad">✗ ${t("decide.refused", { summary: x.summary })}</div>${await errorText(r)}`);
+    } catch (e) {
+      lines.push(`<div class="bad">✗ ${t("decide.refused", { summary: x.summary })} ${esc(String(e))}</div>`);
+    }
+  }
+  decideReport = { task, html: lines.join("") + `<div class="meta">${t("decide.done", { ok, n: picks.length })}</div>` + (ok ? await tellDecided(d, wt, ok) : "") };
+  tick();
+}
+// Every finding decided: the session holding the findings question or the announcement turn for
+// the page is told so (for a question, a free-text answer; for a turn, the server's
+// findings-decided message). Only that ask is posted to; with none held, the message to send.
+async function tellDecided(d, wt, ok) {
+  const open = (d.findings || []).filter(x => x.view === "needs-you" && x.state === "open").length - ok;
+  if (open > 0) return "";
+  const held = attention.filter(g => g.wt === wt).flatMap(g => g.alerts).filter(a => findingsAsk(a, d.id));
+  for (const a of held) {
+    if (a.kind === "turn") await post("api/answer", { wt, session: a.session, agent: a.agent, qid: a.qid, kind: "findings-decided", id: d.id });
+    else await post("api/answer", { wt, session: a.session, agent: a.agent, qid: a.qid,
+      answers: (a.questions || []).map(() => ({ options: [], other: `findings decided on the dashboard for ${d.id}: read findings-decision.md and go on` })) });
+  }
+  return held.length ? `<div class="ok" data-told>${t("decide.told")}</div>`
+    : `<div class="meta" data-tell>${t("decide.tell")}</div>${cmdBlock(sessionCmd(d.path || ".", "prompt.apply-findings", d.id))}`;
 }
 
 // The task as a tree: each step a node, the reviews with their findings as children, a step's
@@ -1718,6 +1761,8 @@ function showTree(d, list, now) {
       const c = d.findings_counts || {};
       kids = FSTATES.some(k => c[k]) ? `<div class="kids fsum">${FSTATES.filter(k => c[k]).map(k => `<span class="fstate ${k}">${t("fcount." + k, { n: c[k] })}</span>`).join("")}</div>` : "";
       if (d.findings_sent) kids += `<div class="kids"><div class="ok">${t("fpick.sent.now", { wt: d.worktree })}</div>${cmdBlock(sessionCmd(d.path || ".", "prompt.apply-findings", d.id))}</div>`;
+      const bar = decisionsBar(d);
+      if (bar) kids += `<div class="kids">${bar}</div>`;
     }
     const clickable = st.stage || st.key === "purpose";
     return `<li class="node ${cls}"><div class="row${clickable ? " click" : ""}"${clickable ? ` data-node="${esc(st.stage ? st.stage.file : "purpose")}"` : ""}><span class="g">${glyph(cls)}</span>${st.role ? robot(st.role, st.ok ? "ok" : i === now ? "running" : "idle", 22) : ""}<b>${st.label}</b>${st.role && st.role !== "foreman" && st.role !== "main" ? `<span class="meta">${esc(roleName(st.role))}</span>` : ""}${here}</div>${kids}</li>`;
