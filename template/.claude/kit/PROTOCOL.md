@@ -44,8 +44,9 @@ request for it:
 - the main session's turn, when the dev ran `work.sh ui turns on` there: the message written on
   the page continues the session.
 
-"Answer in the terminal" releases any of them at once, and so does closing the page; a hold
-never outlasts 9.5 minutes. The dev turns the two switches on or off in the terminal (`work.sh
+"Answer in the terminal" releases any of them at once, and so does closing or hiding the page:
+only a page in view keeps a hold (its polls say `visible`), up to 3570 s under the hooks' 3600 s
+timeout. The dev turns the two switches on or off in the terminal (`work.sh
 ui answers|turns on|off`) or on the dashboard, which asks first and says the risk
 (`POST /api/switch`). Turning them is the dev's act, never an agent's.
 

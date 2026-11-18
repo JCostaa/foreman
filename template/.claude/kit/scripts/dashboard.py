@@ -1103,17 +1103,27 @@ def read_json(path):
         return None
 
 
-def list_attention(root, now=None):
+# When a page last said it is in view (document.visibilityState "visible"). The holds wait an
+# hour for an open page; a forgotten background tab must not keep them, so only a page in view
+# marks `.page` fresh, by its polls and through the event stream.
+VISIBLE_FOR = 15
+_last_visible = [0.0]
+
+
+def list_attention(root, now=None, visible=True):
     """Alerts per worktree, including a worktree with no task: the session in the triage is
-    the case that waits on the dev most. Each call marks the page alive for the hold."""
+    the case that waits on the dev most. A call from a page in view marks the page alive for the
+    hold; one from a hidden tab (visible False) does not."""
     now = time.time() if now is None else now
+    if visible:
+        _last_visible[0] = time.time()
     groups = []
     for i, (wt, branch) in enumerate(worktrees(root)):
         wdir = work_dir(wt)
         if not wdir:
             continue
         adir = os.path.join(wdir, "attention")
-        if os.path.isdir(adir):
+        if visible and os.path.isdir(adir):
             try:
                 with open(os.path.join(adir, ".page"), "a"):
                     pass
@@ -1624,7 +1634,10 @@ def change_signature(root):
 
 def touch_pages(root):
     """While a stream is open the page is open: the hold (attention.py) waits for the web only
-    while `.page` is fresh, and a throttled background tab may poll /api/attention rarely."""
+    while `.page` is fresh, and a throttled background tab may poll /api/attention rarely. Only
+    while a page said it is in view in the last VISIBLE_FOR seconds."""
+    if time.time() - _last_visible[0] > VISIBLE_FOR:
+        return
     for wt, _ in worktrees(root):
         wdir = work_dir(wt)
         adir = os.path.join(wdir, "attention") if wdir else None
@@ -1746,7 +1759,8 @@ class Handler(http.server.BaseHTTPRequestHandler):
                 return self.send(403, json.dumps({"error": "the event stream needs the page's token"}), "application/json")
             return self.event_stream()
         if url.path == "/api/attention":
-            return self.send(200, json.dumps(list_attention(self.root)), "application/json")
+            visible = q.get("visible") == ["1"]
+            return self.send(200, json.dumps(list_attention(self.root, visible=visible)), "application/json")
         if url.path in ("/api/answer", "/api/cleanup", "/api/close", "/api/findings-decision", "/api/switch"):
             return self.refuse_method()
         if url.path == "/api/cleanup-plan":

@@ -262,6 +262,7 @@ def main():
     decision_keys()
     page_holds()
     turn_holds()
+    page_visibility()
     language_hook()
     rooms_and_agents()
     switches()
@@ -619,7 +620,7 @@ def attention_hooks():
         spec.loader.exec_module(m)
         sys.path.remove(os.path.dirname(ATTN))
         os.environ.update({k: v for k, v in env_saved.items() if v is not None})
-        assert (m.HOLD_SECONDS, m.PAGE_GONE, m.PAGE_FRESH, m.POLL) == (570, 30, 10, 0.5), "the hold defaults changed"
+        assert (m.HOLD_SECONDS, m.PAGE_GONE, m.PAGE_FRESH, m.POLL) == (3570, 30, 10, 0.5), "the hold defaults changed"
 
         # 7. Never breaks a session: no stdout, exit 0, on every broken input.
         cases = [("invalid JSON", {}, "{bad", HOOK), ("invalid JSON hold", {}, "{bad", ATTN),
@@ -860,9 +861,11 @@ def wiring():
     w = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(w)
     flow_cmd = {"type": "command", "command": w.FLOW, "timeout": 10}
+    old_hold = {"type": "command", "command": w.HOLD, "timeout": 600}
     guard = {"matcher": "Bash", "hooks": [{"type": "command", "command": "python3 guard.py", "timeout": 600}]}
     gone = {"type": "command", "command": "python3 \"$CLAUDE_PROJECT_DIR/.claude/kit/scripts/cleanup.py\" --hook"}
-    old = {"hooks": {"SessionStart": [{"hooks": [gone]}], "PreToolUse": [guard, {"matcher": "*", "hooks": [flow_cmd]}],
+    old = {"hooks": {"SessionStart": [{"hooks": [gone]}], "PreToolUse": [guard, {"matcher": "*", "hooks": [flow_cmd]},
+                                                                      {"matcher": "AskUserQuestion", "hooks": [old_hold]}],
                      "SubagentStart": [{"hooks": [flow_cmd]}], "SubagentStop": [{"hooks": [flow_cmd]}]}}
     d = tempfile.mkdtemp()
     try:
@@ -876,16 +879,17 @@ def wiring():
         assert s["PreToolUse"][0] == guard, "an existing hook must be kept as it was"
         assert len(entry("PreToolUse", "*")) == 1, "the old '*' entry must not be duplicated"
         hold = entry("PreToolUse", "AskUserQuestion")
-        assert len(hold) == 1 and hold[0]["timeout"] == 600 and hold[0]["command"].endswith("attention.py\" hold"), hold
+        assert len(hold) == 1 and hold[0]["timeout"] == 3600 and hold[0]["command"].endswith("attention.py\" hold"), \
+            f"an older install's 600 s hold is raised to the hour the hold now waits: {hold}"
         for event, matcher in (("PostToolUse", "AskUserQuestion"), ("Notification", "permission_prompt"),
                                ("UserPromptSubmit", None), ("SessionEnd", None)):
             assert len(entry(event, matcher)) == 1, f"{event} {matcher} was not wired"
         # Permission dialogs and the main session's turn are held for the page: their own entry,
-        # with the 600 s timeout the 570 s hold stays under.
+        # with the 3600 s timeout the 3570 s hold stays under.
         for event, arg in (("PermissionRequest", "permission"), ("Stop", "turn")):
             got = entry(event, None)
             held = [h for h in got if h["command"].endswith(f'attention.py\" {arg}')]
-            assert len(got) == 2 and len(held) == 1 and held[0]["timeout"] == 600, f"{event}: {got}"
+            assert len(got) == 2 and len(held) == 1 and held[0]["timeout"] == 3600, f"{event}: {got}"
         starts = [h["command"] for h in entry("SessionStart", None)]
         assert len(starts) == 2 and any("dashboard.py\" hook" in c for c in starts), starts
         assert not any("cleanup.py" in h["command"] for g in s.values() for x in g for h in x["hooks"]), \
@@ -2354,6 +2358,7 @@ def event_stream():
             c.close()
             time.sleep(0.3)
 
+            d._last_visible[0] = time.time() + 600  # a page in view (page_visibility tests the rule)
             c = open_stream()
             got = read_until(c, b"event: hello", 3)
             assert b" 200 " in got and b"text/event-stream" in got and b"data: {\"seq\": 0}" in got, got
@@ -2490,6 +2495,32 @@ def turn_holds():
         json.dump({**{k: v for k, v in a.items() if k not in ("released", "released_at")}, "held": True,
                    "heartbeat": time.time() - 60}, open(path, "w"))
         assert {x["session"]: x for x in d.alerts(os.path.join(root, ".work"), time.time())}["q1"]["released"] == "stopped"
+    finally:
+        shutil.rmtree(root)
+
+
+def page_visibility():
+    """Only a page in view keeps a hold: a poll from a hidden tab does not mark the page alive, nor
+    does the event stream once no page said it is in view for VISIBLE_FOR seconds."""
+    d = load_dashboard("dash_visible")
+    root = kit_root()
+    try:
+        adir = os.path.join(root, ".work", "attention")
+        os.makedirs(adir)
+        page = os.path.join(adir, ".page")
+        open(page, "w").close()
+        old = time.time() - 120
+        os.utime(page, (old, old))
+        d._last_visible[0] = 0.0
+        d.list_attention(root, visible=False)
+        assert os.path.getmtime(page) < time.time() - 60, "a hidden tab's poll does not keep the holds"
+        d.touch_pages(root)
+        assert os.path.getmtime(page) < time.time() - 60, "nor the event stream, with no page in view"
+        d.list_attention(root, visible=True)
+        assert os.path.getmtime(page) > time.time() - 5, "a page in view keeps them"
+        os.utime(page, (old, old))
+        d.touch_pages(root)
+        assert os.path.getmtime(page) > time.time() - 5, "the stream keeps them while a page was in view lately"
     finally:
         shutil.rmtree(root)
 

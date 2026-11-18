@@ -16,7 +16,7 @@
 #        work.sh ui turns [on|off]     lets the dashboard send this worktree's main session its next
 #                                      message when it finishes a turn (held while the page is open)
 #        work.sh ui answers [on|off]   lets the dashboard answer this worktree's AskUserQuestion
-#                                      (held up to 9.5 min while the page is open); no argument
+#                                      (held up to an hour while the page is open and in view); no argument
 #                                      prints the state. Default off: alerts only.
 # Exit codes: 0 ok, 1 a check failed, 2 configuration or usage error.
 set -euo pipefail

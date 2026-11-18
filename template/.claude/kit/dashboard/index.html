@@ -1177,7 +1177,7 @@ async function tick() {
 }
 
 async function render() {
-  const [tasks, attn, flow] = await Promise.all([getJSON("api/tasks"), getJSON("api/attention"), getJSON("flow.json")]);
+  const [tasks, attn, flow] = await Promise.all([getJSON("api/tasks"), getJSON("api/attention?visible=" + (document.visibilityState === "hidden" ? "0" : "1")), getJSON("flow.json")]);
   flowCfg = flow && typeof flow === "object" ? flow : {};
   // A server started before the alerts existed answers 404 here: that is not "no alert".
   if (attn === null || TOKEN === PLACEHOLDER) throw new Error(t("outdated"));
@@ -1780,6 +1780,8 @@ function connect() {
   es.onerror = () => { es.close(); live = false; connecting = false; liveLabel(); startPoll() };
 }
 
+// A page coming back into view says so at once: only a page in view keeps a hold for the page.
+document.addEventListener("visibilitychange", () => { if (document.visibilityState === "visible") tick() });
 window.addEventListener("hashchange", () => { openFile = null; openBot = null; tick() });
 
 applyLang();

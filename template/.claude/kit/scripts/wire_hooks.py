@@ -22,21 +22,26 @@ CLEANUP = "python3 \"$CLAUDE_PROJECT_DIR/.claude/kit/scripts/dashboard.py\" hook
 # Scripts an older kit wired that no longer exist: their entries would fail on every event.
 GONE = ("cleanup.py",)
 
-# (event, matcher or None, command, timeout). The hold's 600 s is the hook timeout its 570 s
-# hold stays under; the rest return in milliseconds.
+# The holds wait for the page as long as it stays open and in view (they let go 30 s after it
+# closes or hides), so their hook timeout is an hour, 30 s over the 3570 s hold. Measured on
+# Claude Code 2.1.326: a 3600 s timeout held a PreToolUse, a Stop and a SessionStart hook for 660
+# to 700 s without a kill (no run went longer), and a 15 s timeout killed its 45 s hook at 15 s
+# (the control). PermissionRequest was not measured on its own: it runs through the same runner.
+HOLD_TIMEOUT = 3600
+# (event, matcher or None, command, timeout). The rest return in milliseconds.
 HOOKS = [
     ("PreToolUse", "*", FLOW, 10),
-    ("PreToolUse", "AskUserQuestion", HOLD, 600),
+    ("PreToolUse", "AskUserQuestion", HOLD, HOLD_TIMEOUT),
     ("PostToolUse", "AskUserQuestion", FLOW, 10),
     # A decision taken on the page reaches the working main session after its next tool call.
     ("PostToolUse", "*", FLOW, 10),
     ("PermissionRequest", None, FLOW, 10),
-    ("PermissionRequest", None, PERMISSION, 600),
+    ("PermissionRequest", None, PERMISSION, HOLD_TIMEOUT),
     ("Notification", "permission_prompt", FLOW, 10),
     ("SubagentStart", None, FLOW, 10),
     ("SubagentStop", None, FLOW, 10),
     ("Stop", None, FLOW, 10),
-    ("Stop", None, TURN, 600),
+    ("Stop", None, TURN, HOLD_TIMEOUT),
     ("UserPromptSubmit", None, FLOW, 10),
     ("SessionStart", None, FLOW, 10),
     ("SessionStart", None, CLEANUP, 10),
@@ -62,8 +67,13 @@ def wire(settings):
         groups[:] = [g for g in groups if g["hooks"]]
     for event, matcher, command, timeout in HOOKS:
         groups = hooks.setdefault(event, [])
-        if any(g.get("matcher") == matcher and same_script(h.get("command", ""), command)
-               for g in groups for h in g.get("hooks", [])):
+        mine = [h for g in groups if g.get("matcher") == matcher for h in g.get("hooks", [])
+                if same_script(h.get("command", ""), command)]
+        if mine:
+            # The kit owns its own entries' command and timeout: an older install's 600 s hold
+            # would be killed long before the hold lets go.
+            for h in mine:
+                h["command"], h["timeout"] = command, timeout
             continue
         groups.append({**({"matcher": matcher} if matcher else {}),
                        "hooks": [{"type": "command", "command": command, "timeout": timeout}]})

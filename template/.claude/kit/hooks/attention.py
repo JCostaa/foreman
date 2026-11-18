@@ -25,7 +25,7 @@ Web answers (opt-in, `work.sh ui answers on`): the hold keeps the AskUserQuestio
 dashboard while the page is open, and answers it through the documented PreToolUse contract
 (permissionDecision "allow" + updatedInput with an `answers` map). It releases to the terminal
 on the "answer in the terminal" button, when the page goes away, when answers are turned off,
-and before the hook timeout (600 s in settings.json), because a hook killed at its timeout
+and before the hook timeout (3600 s in settings.json), because a hook killed at its timeout
 shows an error instead of the dialog.
 """
 import json
@@ -47,8 +47,10 @@ def _env_seconds(name, default):
         return float(default)
 
 
-# 30 s under the 600 s hook timeout: the kill would leave a hook error instead of a fallback.
-HOLD_SECONDS = _env_seconds("KIT_ATTENTION_HOLD", 570)
+# 30 s under the 3600 s hook timeout (wire_hooks.py, measured): the kill would leave a hook error
+# instead of a fallback. While a page stays open and in view the hold waits that long; PAGE_GONE
+# lets go 30 s after the page closes or hides, so a long hold never keeps a dev who left the page.
+HOLD_SECONDS = _env_seconds("KIT_ATTENTION_HOLD", 3570)
 # The page polls every 2 s; a heartbeat older than this means no page is open.
 PAGE_FRESH = 10
 # During a hold, how long without a poll before the question goes back to the terminal.
