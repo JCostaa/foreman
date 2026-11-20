@@ -2,6 +2,8 @@
 # Work directory of Foreman (.claude/kit/PROTOCOL.md).
 #
 # Usage: work.sh init <ID> ["title"]   creates .work/<ID>/ (purpose, ledger with the base commit), marks it current
+#        work.sh triage <ID>           records the task's key while the triage runs (before init), so the
+#                                      dashboard shows the worktree as that task in triage
 #        work.sh status                every stage: gate, status or verdict, open clarifications, what is next
 #        work.sh review-package        writes .work/<ID>/review.diff (commits and diff since the base) for the reviewers
 #        work.sh done [ID]             closes the task (current one by default): writes <ID>/closed, which
@@ -16,7 +18,7 @@
 #        work.sh ui turns [on|off]     lets the dashboard send this worktree's main session its next
 #                                      message when it finishes a turn (held while the page is open)
 #        work.sh ui answers [on|off]   lets the dashboard answer this worktree's AskUserQuestion
-#                                      (held up to 9.5 min while the page is open); no argument
+#                                      (held up to an hour while the page is open and in view); no argument
 #                                      prints the state. Default off: alerts only.
 # Exit codes: 0 ok, 1 a check failed, 2 configuration or usage error.
 set -euo pipefail
@@ -64,8 +66,18 @@ EOF
       base=$(git -C "$root" rev-parse HEAD 2>/dev/null || echo none)
       printf '# Ledger: %s\n\nBase: %s\n\n<!-- One line per decision taken without asking the dev:\n- Ruling: <decision> | why: <reason> | cost if wrong: <impact> -->\n' "$id" "$base" > "$work/$id/ledger.md"
     fi
+    # The branch the task starts on is the task's: a later branch switch in this worktree (the
+    # next part of a split story) must not move the finished task back to ready-for-mr.
+    if [ ! -f "$work/$id/branch" ]; then
+      git -C "$root" rev-parse --abbrev-ref HEAD 2>/dev/null > "$work/$id/branch" || rm -f "$work/$id/branch"
+    fi
     echo "$id" > "$work/current"
     echo "$work/$id/00-purpose.md"
+    ;;
+  triage)
+    id="${2:?usage: work.sh triage <ID>}"
+    [[ "$id" =~ ^[A-Z][A-Z0-9]*-[0-9]+$ ]] || { echo "the key must look like ABC-12 (got: $id)" >&2; exit 1; }
+    mkdir -p "$work/attention" && echo "$id" > "$work/attention/.task-key"
     ;;
   status)
     id=$(cat "$work/current" 2>/dev/null || true)
@@ -119,7 +131,15 @@ EOF
         port=$(python3 -c 'import socket,sys
 for p in range(8787, 8800):
     s = socket.socket()
+    # As the server binds (allow_reuse_address): a port left in TIME_WAIT by the last page is
+    # free. On macOS that bind also succeeds next to a listener on 0.0.0.0, so a port that accepts
+    # a connection is busy; checked before the bind, which would take the connection to itself.
+    s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
     try:
+        c = socket.socket(); c.settimeout(0.3)
+        busy = c.connect_ex(("127.0.0.1", p)) == 0; c.close()
+        if busy:
+            continue
         s.bind(("127.0.0.1", p)); print(p); sys.exit(0)
     except OSError:
         pass
@@ -168,5 +188,5 @@ sys.exit(1)') || { echo "no free port in 8787-8799" >&2; exit 2; }
         ;;
     esac
     ;;
-  *) sed -n 2,22p "$0"; exit 2 ;;
+  *) sed -n 2,24p "$0"; exit 2 ;;
 esac

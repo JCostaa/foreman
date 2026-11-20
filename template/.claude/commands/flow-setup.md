@@ -131,9 +131,15 @@ then confirm:
    optional for a public repository, or `GITLAB_TOKEN`), set in the shell that starts it, never
    in a file. A host other than github.com goes into `forge_hosts`, or the token is never sent
    there. Ask for `base_branches` only when the base is not `main`, `master` or `develop`.
+8. Whether the agent may ship a finished task: push its branch and open the PR/MR itself
+   (`"ship": {"enabled": true, "tool": "auto", "push": true, "draft": true}` in `flow.json`; off by
+   default). `auto` picks `gh` for github.com and `glab` for a GitLab; for another forge or a
+   company script, `"tool": "custom"` with `"command"`, a template using `{base}`, `{branch}`,
+   `{title}`, `{body_file}` and `{draft}`. Check the tool is installed and logged in (`gh auth
+   status`, `glab auth status`) and say what to run if not.
 
 Edit only the sections of `.claude/agents/executor.md`, `tester.md` and `reviewer.md` (and the
-`model:` lines, and `forge`, `forge_hosts` or `base_branches` in `flow.json`) that these answers change, show the diff, and wait for the "ok". Then offer to
+`model:` lines, and `forge`, `forge_hosts`, `base_branches` or `ship` in `flow.json`) that these answers change, show the diff, and wait for the "ok". Then offer to
 run the evals on the adapted agents: `python3 .claude/kit/evals/run.py --runs 3` (it calls the
 model and costs tokens).
 

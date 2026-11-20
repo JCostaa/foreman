@@ -19,6 +19,8 @@ orchestrator only carries paths and one-line statuses.
   05-retro.md               retrospective: what went wrong, proposed learnings
   findings-decision.md      orchestrator, after the dev picked which findings get fixed
   closed                    `work.sh done`: the task closed without (or before) a PR/MR
+  branch                    `work.sh init`: the branch the task started on, its PR/MR lookup's
+  mr.json                   the first PR/MR found open or merged, kept so done survives a branch switch
 .work/current               the ID being worked on (the gates read it)
 .work/events.jsonl          what every agent did, for the dashboard
 ```
@@ -42,8 +44,9 @@ request for it:
 - the main session's turn, when the dev ran `work.sh ui turns on` there: the message written on
   the page continues the session.
 
-"Answer in the terminal" releases any of them at once, and so does closing the page; a hold
-never outlasts 9.5 minutes. The dev turns the two switches on or off in the terminal (`work.sh
+"Answer in the terminal" releases any of them at once, and so does closing or hiding the page:
+only a page in view keeps a hold (its polls say `visible`), up to 3570 s under the hooks' 3600 s
+timeout. The dev turns the two switches on or off in the terminal (`work.sh
 ui answers|turns on|off`) or on the dashboard, which asks first and says the risk
 (`POST /api/switch`). Turning them is the dev's act, never an agent's.
 
@@ -110,6 +113,12 @@ the findings and their state, and the dev decides each one from the page. `impor
 high and `minor` as low; `Severity: x` and `**Medium**` are read too, and a finding without a
 severity shows as `unknown`.
 
+A lens with nothing to review in this task writes `Verdict: PASS` and a `## Not applicable`
+section saying why; the dashboard shows it as "not applicable" (a FAIL with that section stays a
+FAIL), not as a plain approval. A fix round re-runs the contract reviewer and the lenses whose last
+review had findings: a lens whose last review was a PASS is not required again, so its file being
+older than the round does not hold the task before its reviews.
+
 After `max_fix_rounds` rounds of the executor (default 3) the open findings go to the dev.
 
 ## Closing a task
@@ -137,17 +146,27 @@ Every lens having a verdict is not "done". The dashboard's statuses after the re
   `fail-unresolved`.
 
 **Findings on the page.** Each finding says who acts on it: the dev (an open finding of a
-PASS_WITH_FINDINGS review, a FAIL after `max_fix_rounds`, or a fix the newer review still
-reports), the stage its route names (an open finding of a FAIL review, inside the fix-round cap:
-the fix loop handles it, and the task's next step says so), a fix in progress, fixed, or
-accepted. The dev decides an open finding with "Fix" or "Accept" on its card; the page appends
-its line to `findings-decision.md` at once and leaves the session a request,
-`<work_dir>/attention/.requests/findings-<ID>.json`, that the next prompt or start of a session in
-that worktree receives as context: apply the decisions, do not ask about them again. After the
-re-review, the orchestrator changes the line of each finding the review no longer reports from
-`- fix` to `- fixed`. While a fix asked from the page waits for its re-review the task reads
-`fixing`, not `ready-for-mr`. When a fix round ends, the executor or the orchestrator changes the
-line of each finding it fixed from `- fix` to `- fixed` (key and text unchanged).
+PASS_WITH_FINDINGS review, a FAIL after `max_fix_rounds`, or a fix the newer review of its lens
+still reports, which opens again), the stage its route names (an open finding of a FAIL review,
+inside the fix-round cap: the fix loop handles it, and the task's next step says so), a fix in
+progress, fixed, or accepted. The dev decides open findings in one place, the task's steps view
+("Needs you" only says how many wait, with "Decide in Steps"): Fix and Accept on each open
+finding stage a choice in the page, nothing posted, and one "Send N decisions" posts each one,
+reports per finding what landed or why it was refused, and keeps every choice that did not land.
+For each, the page appends its keyed line to `findings-decision.md` and leaves the session a
+request, `<work_dir>/attention/.requests/findings-<ID>.json`, that the next prompt, tool call or
+start of a session in that worktree receives as context: apply the decisions, do not ask about
+them again. Only the findings decision itself folds into the task's Decide row: a held question
+of the main session whose every question text starts with exactly `Findings <ID>:`, or a held
+turn of the main session whose whole message is exactly `Decide the findings of <ID> in the
+dashboard's Steps (or answer here).`; once every finding is decided, the page answers only those
+(the question with a free-text answer, the turn with the server's `findings-decided` message).
+Any other question or turn keeps its own row and is never posted to. Residual risk: the match is
+on text, so a main session that a prompt injection made write that prefix or that line would get
+the free-text answer; a subagent cannot, since its alert is never `main`. After the re-review, the
+orchestrator changes the line of each finding the review no longer reports from `- fix` to
+`- fixed`. While a fix waits for its re-review, or an agent of a flow stage runs, the task reads
+`fixing`, never `ready-for-mr`.
 
 A task in `findings` shows each finding on the dashboard (lens, severity, one line, read from
 the review files), which ones `findings-decision.md` decided and which are still open, and why

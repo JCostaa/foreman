@@ -2,6 +2,7 @@
 """Proves the kit's checks bite: run with `python3 .claude/kit/test_kit.py`."""
 import json
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -242,21 +243,35 @@ def main():
     finally:
         shutil.rmtree(root)
     merge_order()
+    merge_order_uncommitted()
+    ship()
     attention_hooks()
     attention_server()
     wiring()
+    hooks_via_main()
     closing_status()
+    fix_round_status()
+    partial_rerun_status()
+    reopened_findings()
     closing_mr()
+    task_owns_branch()
     mr_fetch_http()
     work_done()
     closing_cleanup()
     close_and_actions()
     event_stream()
     findings_view()
+    whole_findings()
     closing_git()
     findings_decision_endpoint()
     decision_keys()
     page_holds()
+    turn_holds()
+    page_visibility()
+    alert_text()
+    turn_awaits()
+    findings_decided_message()
+    triage_task()
     language_hook()
     rooms_and_agents()
     switches()
@@ -316,6 +331,163 @@ def merge_order():
         shutil.rmtree(repo)
 
 
+def merge_order_uncommitted():
+    """Running tasks keep their work uncommitted: the worktree's changed files count. A and B
+    create the same new files, B and C change the same four files, A and C are independent: A
+    and C merge first, B rebases once onto both. The sidebar gets the same order per branch."""
+    base = tempfile.mkdtemp()
+    try:
+        repo = os.path.join(base, "repo")
+        os.makedirs(repo)
+        g = lambda *a, cwd=repo: subprocess.run(["git", "-C", cwd, "-c", "user.name=t", "-c", "user.email=t@t", *a],
+                                                check=True, capture_output=True, text=True).stdout
+        g("init", "-q", "-b", "develop")
+        for f in ("w1", "w2", "w3", "w4", "solo", "c-only"):
+            open(os.path.join(repo, f), "w").write("x\n")
+        g("add", "-A")
+        g("commit", "-qm", "base")
+        wt = {}
+        for i, name in enumerate(("task-b", "task-a", "task-c", "task-d")):
+            wt[name] = os.path.join(base, name)
+            g("worktree", "add", "-q", "-b", name, wt[name])
+            # B's worktree is the newest; the rule must not lean on it to put B last.
+            os.utime(os.path.join(wt[name], ".git"), (1_700_000_000 + 100 * i,) * 2)
+        def write(name, path, text="y\n"):
+            full = os.path.join(wt[name], path)
+            os.makedirs(os.path.dirname(full), exist_ok=True)
+            open(full, "w").write(text)
+        shared = [f"src/ports/{p}.py" for p in ("orders", "ledger", "notify", "phase", "billing", "export")]
+        for p in shared:
+            write("task-a", p)
+            write("task-b", p)
+        for f in ("w1", "w2", "w3", "w4"):
+            write("task-b", f)
+            write("task-c", f)
+        write("task-c", "c-only")
+        # D committed its work and left one more file uncommitted: both count, and it overlaps no one.
+        write("task-d", "solo")
+        g("add", "-A", cwd=wt["task-d"])
+        g("commit", "-qm", "d", cwd=wt["task-d"])
+        write("task-d", "d-extra")
+        script = os.path.join(KIT, "scripts", "merge-order.py")
+        run = lambda *a: subprocess.run([sys.executable, script, "--base", "develop", *a], capture_output=True, text=True, cwd=repo)
+        p = run("--json")
+        assert p.returncode == 0, p.stderr
+        got = json.loads(p.stdout)
+        order = got["order"]
+        assert set(order) == {"task-a", "task-b", "task-c", "task-d"}, f"uncommitted work counts: {got}"
+        assert order.index("task-b") > order.index("task-a") and order.index("task-b") > order.index("task-c"), \
+            f"B overlaps both: it merges after A and C and rebases once: {order}"
+        kinds = {(e["first"], e["then"]): e["kind"] for e in got["edges"]}
+        assert kinds == {("task-a", "task-b"): "overlap", ("task-c", "task-b"): "overlap"}, kinds
+        assert "src/ports/orders.py" in next(e["detail"] for e in got["edges"] if e["first"] == "task-a"), got
+        assert got["pending"] == ["task-a", "task-b", "task-c"] and got["independent"] == ["task-d"], got
+        text = run().stdout
+        assert "task-b (not committed yet)" in text and "task-d (not committed yet)" not in text \
+            and "task-d  independent, any order" in text, text
+        # The sidebar's per-branch place, from the server, against the remote's default branch.
+        g("remote", "add", "origin", repo)
+        g("fetch", "-q", "origin")
+        g("symbolic-ref", "refs/remotes/origin/HEAD", "refs/remotes/origin/develop")
+        d = load_dashboard("dash_merge")
+        pos = d.merge_positions(repo)
+        assert pos["task-b"]["pos"] > max(pos["task-a"]["pos"], pos["task-c"]["pos"]) and pos["task-b"]["total"] == 4 \
+            and sorted(pos["task-b"]["after"]) == ["task-a", "task-c"] and pos["task-b"]["pending"] \
+            and pos["task-d"]["independent"] and not pos["task-d"]["pending"], pos
+    finally:
+        shutil.rmtree(base)
+
+
+def ship():
+    """ship.py: off by default, it prints the push and the PR/MR command; on, it pushes the task's
+    own branch and opens the PR/MR with the tool picked from the origin (gh for github.com, glab for a
+    GitLab), keeps the URL in mr.json, refuses a base branch, names a missing or logged-out tool, and
+    shell-quotes each value of a custom template."""
+    base = os.path.realpath(tempfile.mkdtemp())
+    try:
+        remote, repo, bin_dir = os.path.join(base, "remote.git"), os.path.join(base, "repo"), os.path.join(base, "bin")
+        os.makedirs(bin_dir)
+        g = lambda *a: subprocess.run(["git", "-C", repo, "-c", "user.name=t", "-c", "user.email=t@t", *a],
+                                      check=True, capture_output=True, text=True).stdout
+        subprocess.run(["git", "init", "-q", "--bare", remote], check=True)
+        os.makedirs(os.path.join(repo, ".claude"))
+        flow = json.load(open(FLOW))
+        json.dump(flow, open(os.path.join(repo, ".claude", "flow.json"), "w"))
+        open(os.path.join(repo, ".gitignore"), "w").write(".work/\n")
+        g("init", "-q", "-b", "main")
+        g("add", "-A")
+        g("commit", "-qm", "init")
+        g("remote", "add", "origin", remote)
+        g("push", "-q", "origin", "main")
+        g("fetch", "-q", "origin")
+        g("symbolic-ref", "refs/remotes/origin/HEAD", "refs/remotes/origin/main")
+        g("remote", "set-url", "origin", "https://github.com/acme/app.git")
+        g("remote", "set-url", "--push", "origin", remote)
+        g("checkout", "-q", "-b", "feat/abc-12")
+        tdir = os.path.join(repo, ".work", "ABC-12")
+        os.makedirs(tdir)
+        open(os.path.join(tdir, "00-purpose.md"), "w").write("# ABC-12 CSV export\n\nThe purpose.\n")
+        open(os.path.join(tdir, "branch"), "w").write("feat/abc-12\n")
+        log = os.path.join(base, "calls.log")
+
+        def tool(name, body):
+            path = os.path.join(bin_dir, name)
+            open(path, "w").write(f"#!/bin/sh\necho \"{name} $*\" >> {log}\n{body}\n")
+            os.chmod(path, 0o755)
+        script = os.path.join(KIT, "scripts", "ship.py")
+
+        def run(*a, path=None, bare=False):
+            env = dict(os.environ, CLAUDE_PROJECT_DIR=repo, PATH=(path or bin_dir) + ("" if bare else os.pathsep + "/usr/bin:/bin"))
+            return subprocess.run([sys.executable, script, *a], capture_output=True, text=True, cwd=repo, env=env)
+
+        def set_ship(**cfg):
+            json.dump({**flow, "ship": cfg}, open(os.path.join(repo, ".claude", "flow.json"), "w"))
+
+        # Off by default: the commands to run, nothing pushed, nothing opened.
+        p = run("ABC-12")
+        assert p.returncode == 0 and "git push -u origin feat/abc-12" in p.stdout and "gh pr create" in p.stdout, p.stdout + p.stderr
+        assert not os.path.exists(log), "off: no tool is called"
+        # On, auto picks gh for github.com; a missing gh is named, never a crash.
+        set_ship(enabled=True)
+        # A PATH with git only: a runner may have a real gh in /usr/bin.
+        only_git = os.path.join(base, "only-git")
+        os.makedirs(only_git)
+        os.symlink(shutil.which("git"), os.path.join(only_git, "git"))
+        p = run("ABC-12", path=only_git, bare=True)
+        assert p.returncode == 1 and "gh is not installed" in p.stderr, p.stderr
+        tool("gh", 'case "$1" in auth) exit 1;; esac')
+        p = run("ABC-12")
+        assert p.returncode == 1 and "gh auth login" in p.stderr, f"logged out: says what to run: {p.stderr}"
+        tool("gh", 'case "$1" in auth) exit 0;; pr) echo "https://github.com/acme/app/pull/42";; esac')
+        p = run("ABC-12")
+        assert p.returncode == 0 and p.stdout.strip() == "https://github.com/acme/app/pull/42", p.stdout + p.stderr
+        kept = json.load(open(os.path.join(tdir, "mr.json")))
+        assert kept == {"iid": 42, "url": "https://github.com/acme/app/pull/42", "state": "opened", "branch": "feat/abc-12"}, kept
+        assert "feat/abc-12" in subprocess.run(["git", "-C", remote, "branch"], capture_output=True, text=True).stdout, \
+            "the branch was pushed"
+        calls = open(log).read()
+        assert "--base main --head feat/abc-12" in calls and "--draft" in calls, calls
+        # A GitLab origin picks glab.
+        g("remote", "set-url", "origin", "https://gitlab.example.com/acme/app.git")
+        g("remote", "set-url", "--push", "origin", remote)
+        tool("glab", 'case "$1" in auth) exit 0;; mr) echo "https://gitlab.example.com/acme/app/-/merge_requests/7";; esac')
+        p = run("ABC-12")
+        assert p.returncode == 0 and p.stdout.strip().endswith("/merge_requests/7") and "glab mr create" in open(log).read(), \
+            p.stdout + p.stderr
+        # A custom template: each value is one quoted word, never split or run as shell.
+        open(os.path.join(tdir, "00-purpose.md"), "w").write("# ABC-12 Export; rm -rf $HOME `x`\n")
+        tool("pr-tool", 'printf "%s\\n" "$@" > ' + os.path.join(base, "args.txt") + '\necho "https://forge.example.com/pr/9"')
+        set_ship(enabled=True, tool="custom", command="pr-tool --title {title} --into {base}")
+        p = run("ABC-12")
+        args = open(os.path.join(base, "args.txt")).read().splitlines()
+        assert p.returncode == 0 and args == ["--title", "Export; rm -rf $HOME `x`", "--into", "main"], (args, p.stderr)
+        # A base branch never ships.
+        open(os.path.join(tdir, "branch"), "w").write("main\n")
+        g("checkout", "-q", "main")
+        p = run("ABC-12")
+        assert p.returncode == 1 and "base branch" in p.stderr, p.stderr
+    finally:
+        shutil.rmtree(base)
 
 
 def hook(root, payload, *args, env=None, script=None, raw=None):
@@ -614,7 +786,7 @@ def attention_hooks():
         spec.loader.exec_module(m)
         sys.path.remove(os.path.dirname(ATTN))
         os.environ.update({k: v for k, v in env_saved.items() if v is not None})
-        assert (m.HOLD_SECONDS, m.PAGE_GONE, m.PAGE_FRESH, m.POLL) == (570, 30, 10, 0.5), "the hold defaults changed"
+        assert (m.HOLD_SECONDS, m.PAGE_GONE, m.PAGE_FRESH, m.POLL) == (3570, 30, 10, 0.5), "the hold defaults changed"
 
         # 7. Never breaks a session: no stdout, exit 0, on every broken input.
         cases = [("invalid JSON", {}, "{bad", HOOK), ("invalid JSON hold", {}, "{bad", ATTN),
@@ -855,9 +1027,11 @@ def wiring():
     w = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(w)
     flow_cmd = {"type": "command", "command": w.FLOW, "timeout": 10}
+    old_hold = {"type": "command", "command": w.HOLD, "timeout": 600}
     guard = {"matcher": "Bash", "hooks": [{"type": "command", "command": "python3 guard.py", "timeout": 600}]}
     gone = {"type": "command", "command": "python3 \"$CLAUDE_PROJECT_DIR/.claude/kit/scripts/cleanup.py\" --hook"}
-    old = {"hooks": {"SessionStart": [{"hooks": [gone]}], "PreToolUse": [guard, {"matcher": "*", "hooks": [flow_cmd]}],
+    old = {"hooks": {"SessionStart": [{"hooks": [gone]}], "PreToolUse": [guard, {"matcher": "*", "hooks": [flow_cmd]},
+                                                                      {"matcher": "AskUserQuestion", "hooks": [old_hold]}],
                      "SubagentStart": [{"hooks": [flow_cmd]}], "SubagentStop": [{"hooks": [flow_cmd]}]}}
     d = tempfile.mkdtemp()
     try:
@@ -871,16 +1045,17 @@ def wiring():
         assert s["PreToolUse"][0] == guard, "an existing hook must be kept as it was"
         assert len(entry("PreToolUse", "*")) == 1, "the old '*' entry must not be duplicated"
         hold = entry("PreToolUse", "AskUserQuestion")
-        assert len(hold) == 1 and hold[0]["timeout"] == 600 and hold[0]["command"].endswith("attention.py\" hold"), hold
+        assert len(hold) == 1 and hold[0]["timeout"] == 3600 and hold[0]["command"].endswith("attention.py\" hold"), \
+            f"an older install's 600 s hold is raised to the hour the hold now waits: {hold}"
         for event, matcher in (("PostToolUse", "AskUserQuestion"), ("Notification", "permission_prompt"),
                                ("UserPromptSubmit", None), ("SessionEnd", None)):
             assert len(entry(event, matcher)) == 1, f"{event} {matcher} was not wired"
         # Permission dialogs and the main session's turn are held for the page: their own entry,
-        # with the 600 s timeout the 570 s hold stays under.
+        # with the 3600 s timeout the 3570 s hold stays under.
         for event, arg in (("PermissionRequest", "permission"), ("Stop", "turn")):
             got = entry(event, None)
             held = [h for h in got if h["command"].endswith(f'attention.py\" {arg}')]
-            assert len(got) == 2 and len(held) == 1 and held[0]["timeout"] == 600, f"{event}: {got}"
+            assert len(got) == 2 and len(held) == 1 and held[0]["timeout"] == 3600, f"{event}: {got}"
         starts = [h["command"] for h in entry("SessionStart", None)]
         assert len(starts) == 2 and any("dashboard.py\" hook" in c for c in starts), starts
         assert not any("cleanup.py" in h["command"] for g in s.values() for x in g for h in x["hooks"]), \
@@ -892,6 +1067,42 @@ def wiring():
         shutil.rmtree(d)
 
 
+def hooks_via_main():
+    """From a linked worktree the hooks run the main checkout's copy of a script (a worktree on an
+    older branch ran old hooks); outside git, or when the main checkout lacks it, the project's own
+    copy runs; an old-form entry is upgraded in place, never duplicated."""
+    import importlib.util
+    spec = importlib.util.spec_from_file_location("wire_hooks_vm", WIRE)
+    w = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(w)
+    base = os.path.realpath(tempfile.mkdtemp())
+    try:
+        main_repo, wt, plain = os.path.join(base, "main"), os.path.join(base, "wt"), os.path.join(base, "plain")
+        for d in (main_repo, plain):
+            os.makedirs(os.path.join(d, ".claude", "kit", "hooks"))
+        open(os.path.join(main_repo, ".claude", "kit", "hooks", "flow.py"), "w").write("import os\nprint('MAIN', os.environ['CLAUDE_PROJECT_DIR'])\n")
+        open(os.path.join(plain, ".claude", "kit", "hooks", "flow.py"), "w").write("print('OWN')\n")
+        g = lambda *a: subprocess.run(["git", "-C", main_repo, "-c", "user.name=t", "-c", "user.email=t@t", *a], check=True, capture_output=True)
+        g("init", "-q"); g("add", "-A"); g("commit", "-qm", "init"); g("worktree", "add", "-q", wt)
+        open(os.path.join(wt, ".claude", "kit", "hooks", "flow.py"), "w").write("print('WORKTREE')\n")
+        run = lambda proj: subprocess.run(["bash", "-c", w.FLOW], env={**os.environ, "CLAUDE_PROJECT_DIR": proj},
+                                          capture_output=True, text=True).stdout.strip()
+        assert run(wt) == f"MAIN {wt}", f"a linked worktree runs the main checkout's copy, on its own project: {run(wt)!r}"
+        assert run(plain) == "OWN", "outside git, the project's own copy runs"
+        os.remove(os.path.join(main_repo, ".claude", "kit", "hooks", "flow.py"))
+        assert run(wt) == "WORKTREE", "the main checkout without the script: the worktree's own copy runs"
+        # An old-form entry (a plain path) is replaced by the new command, not duplicated.
+        path = os.path.join(base, "settings.json")
+        oldform = "python3 \"$CLAUDE_PROJECT_DIR/.claude/kit/hooks/attention.py\" hold"
+        open(path, "w").write(json.dumps({"hooks": {"PreToolUse": [{"matcher": "AskUserQuestion", "hooks": [
+            {"type": "command", "command": oldform, "timeout": 600}]}]}}))
+        subprocess.run([sys.executable, WIRE, path], check=True)
+        got = [h["command"] for x in json.load(open(path))["hooks"]["PreToolUse"] if x.get("matcher") == "AskUserQuestion" for h in x["hooks"]]
+        assert got == [w.HOLD], f"the old-form hold is upgraded in place: {got}"
+    finally:
+        shutil.rmtree(base)
+
+
 def load_dashboard(name):
     import importlib.util
     spec = importlib.util.spec_from_file_location(name, os.path.join(KIT, "scripts", "dashboard.py"))
@@ -901,6 +1112,268 @@ def load_dashboard(name):
 
 
 REVIEWS = ("04-review-contract.md", "04-review-security.md", "04-review-qa.md", "04-review-product.md")
+
+
+def fix_round_status():
+    """A fix round never reads ready-for-mr: the page said ready-for-mr while the executor of the
+    fix round ran, and the dev nearly opened the PR. Ready only once every fix is marked fixed,
+    nothing of the flow runs and the lenses wrote after the round's agents started. Only an agent
+    whose type is a stage of flow.json holds the task."""
+    d = load_dashboard("dash_fix_round")
+    base = tempfile.mkdtemp()
+    try:
+        tdir = os.path.join(base, "T-1")
+        os.makedirs(tdir)
+        flow = json.load(open(FLOW))
+        s0 = 1_700_000_000
+
+        def put(name, text, t):
+            open(os.path.join(tdir, name), "w").write(text)
+            os.utime(os.path.join(tdir, name), (t, t))
+        for i, f in enumerate(("01-contract.md", "02-change.md", "03-proof.md")):
+            put(f, "x\n", s0 + i)
+        for f in REVIEWS:
+            put(f, "Verdict: PASS_WITH_FINDINGS\n\n## Findings\n- [high] the hold drops the answer\n", s0 + 10)
+        keys = [x["key"] for x in d.decided_findings(tdir, d.stages(flow, tdir))]
+        lens = lambda f: f[len("04-review-"):-3]
+        put("findings-decision.md", "Decided: 2026-11-17\n" + "".join(
+            f"- fix high {lens(f)} [{k}]: the hold drops the answer\n" for f, k in zip(REVIEWS, keys)), s0 + 20)
+        executor = lambda state, start: {"agent": "e2", "type": "executor", "state": state, "start": start, "ran": True,
+                                         "seen": start + 5, "tools": 3}
+        state = lambda lanes: d.task_state(d.stages(flow, tdir), lanes, tdir, None)
+        got = state([executor("running", s0 + 30)])
+        assert got["status"] == "fixing" and got["next_step"] == "wait-fixes", \
+            f"a decided fix with a running executor is a fix round, not ready for a PR/MR: {got}"
+        assert state([])["status"] == "fixing", "a finding still fix-pending is a fix round even with no agent seen"
+        # The executor marks the fixes; the lenses have not re-run since it started.
+        text = open(os.path.join(tdir, "findings-decision.md")).read().replace("- fix high", "- fixed high")
+        put("findings-decision.md", text, s0 + 60)
+        done = executor("ok", s0 + 30)
+        got = state([done])
+        assert got["status"] == "tester" and got["next_step"] == "reviews", \
+            f"fixed and nothing runs, the lens files older than the round's executor: paused after the tester: {got}"
+        put("02-change.md", "x\n", s0 + 70)
+        put("03-proof.md", "x\n", s0 + 80)
+        assert state([done])["status"] == "tester", "the proof is new, the lens files still older than the round"
+        for f in REVIEWS:
+            put(f, "Verdict: PASS\n", s0 + 90)
+        got = state([done])
+        assert got["status"] == "ready-for-mr" and got["next_step"] == "open-mr", f"all fixed and lenses re-run: {got}"
+        assert state([done, {**executor("running", s0 + 100), "agent": "r3", "type": "reviewer"}])["status"] == "fixing", \
+            "a flow agent running (a lens re-running alone) is never ready for a PR/MR"
+        helper = {**executor("running", s0 + 100), "agent": "g1", "type": "general-purpose"}
+        assert state([done, helper])["status"] == "ready-for-mr", "a subagent of no flow stage does not hold the task"
+
+        # A FAIL during its fix round: the page said FAIL while the executor fixed.
+        put("04-review-product.md", "Verdict: FAIL\n\n## Findings\n- [high] the export drops rows\n", s0 + 200)
+        assert state([])["status"] == "FAIL", "a FAIL with its finding undecided waits on the dev"
+        items = d.decided_findings(tdir, d.stages(flow, tdir))
+        fail_key = next(f["key"] for f in items if f["lens"] == "product")
+        put("findings-decision.md", open(os.path.join(tdir, "findings-decision.md")).read()
+            + f"- fix high product [{fail_key}]: the export drops rows\n", s0 + 210)
+        got = state([executor("running", s0 + 220)])
+        assert got["status"] == "fixing" and got["next_step"] == "wait-fixes", f"a decided FAIL being fixed is the fix round: {got}"
+        assert state([])["status"] == "fixing", "decided, its fix still pending: the fix round too"
+        put("04-review-product.md", "Verdict: FAIL\n\n## Findings\n- [high] the export still drops rows\n", s0 + 300)
+        assert state([executor("ok", s0 + 220)])["status"] == "FAIL", "a re-review that fails again shows FAIL"
+    finally:
+        shutil.rmtree(base)
+
+
+def partial_rerun_status():
+    """The fix round re-runs the contract reviewer and only the lenses that had findings. A lens
+    whose last review had no finding (a PASS) and is older than the round needs no re-run: the
+    task is ready for its PR/MR once the others re-ran. The contract reviewer is never settled."""
+    d = load_dashboard("dash_partial_rerun")
+    base = tempfile.mkdtemp()
+    try:
+        tdir = os.path.join(base, "T-1")
+        os.makedirs(tdir)
+        flow = json.load(open(FLOW))
+        s0 = 1_700_000_000
+
+        def put(name, text, t):
+            open(os.path.join(tdir, name), "w").write(text)
+            os.utime(os.path.join(tdir, name), (t, t))
+        for i, f in enumerate(("01-contract.md", "02-change.md", "03-proof.md")):
+            put(f, "x\n", s0 + i)
+        finding = "Verdict: PASS_WITH_FINDINGS\n\n## Findings\n- [high] the hold drops the answer\n"
+        put("04-review-contract.md", "Verdict: PASS\n\n## Findings\n- none\n", s0 + 10)
+        put("04-review-security.md", "Verdict: PASS\n\n## Findings\n- none\n", s0 + 10)
+        put("04-review-qa.md", "Verdict: PASS\n\n## Findings\n- none\n", s0 + 10)
+        put("04-review-product.md", finding, s0 + 10)
+        put("04-review-security.md", "Verdict: PASS\n\n## Not applicable\nNo input crosses a trust boundary.\n", s0 + 10)
+        st = d.stages(flow, tdir)
+        by = {x["file"]: x for x in st}
+        assert by["04-review-security.md"]["na"] and not by["04-review-qa.md"]["na"], "a Not applicable section is said"
+        put("04-review-product.md", "Verdict: FAIL\n\n## Not applicable\nx\n\n## Findings\n- [high] y\n", s0 + 10)
+        fail = {x["file"]: x for x in d.stages(flow, tdir)}["04-review-product.md"]
+        assert not fail["na"] and not fail["settled"], f"a FAIL is never not applicable nor settled: {fail}"
+        put("04-review-product.md", finding, s0 + 10)
+        assert by["04-review-qa.md"]["settled"] and by["04-review-security.md"]["settled"] \
+            and not by["04-review-product.md"]["settled"] and not by["04-review-contract.md"]["settled"], \
+            f"settled: the lenses with no finding, never the contract reviewer, PASS as it is: {st}"
+        keys = {x["lens"]: x["key"] for x in d.decided_findings(tdir, st)}
+        put("findings-decision.md", "Decided: 2026-11-18\n" + "".join(
+            f"- fixed high {lens} [{k}]: the hold drops the answer\n" for lens, k in keys.items()), s0 + 60)
+        done = {"agent": "e2", "type": "executor", "state": "ok", "start": s0 + 30, "ran": True, "seen": s0 + 35, "tools": 3}
+        state = lambda: d.task_state(d.stages(flow, tdir), [done], tdir, None)
+        put("02-change.md", "x\n", s0 + 70)
+        put("03-proof.md", "x\n", s0 + 80)
+        assert state()["status"] == "tester", "nothing re-ran yet: paused before the reviews"
+        put("04-review-product.md", "Verdict: PASS\n", s0 + 90)
+        assert state()["status"] == "tester", "the contract reviewer always re-runs: still paused before it"
+        put("04-review-contract.md", "Verdict: PASS\n", s0 + 95)
+        got = state()
+        assert got["status"] == "ready-for-mr", \
+            f"the lenses with findings re-ran; qa and security, clean and older than the round, need no re-run: {got}"
+        # Control: the same old qa file, had it carried a finding, would hold the round.
+        put("04-review-qa.md", finding, s0 + 10)
+        assert state()["status"] != "ready-for-mr", "a lens with a finding older than the round is not settled"
+    finally:
+        shutil.rmtree(base)
+
+
+def reopened_findings():
+    """A lens that re-runs and still lists a finding decided fix or marked fixed, in the same words
+    (so the same key): the problem is still there, the finding opens again and the task asks the
+    dev. An accepted one carries over. Nothing undecided asks nothing: "some-open" agrees with the
+    open count, never with 0 open."""
+    d = load_dashboard("dash_reopened")
+    base = tempfile.mkdtemp()
+    try:
+        flow = json.load(open(FLOW))
+        s0 = 1_700_000_000
+
+        def make(name):
+            t = os.path.join(base, name)
+            os.makedirs(t)
+            for i, f in enumerate(("01-contract.md", "02-change.md", "03-proof.md")):
+                put(t, f, "x\n", s0 + i)
+            return t
+
+        def put(t, name, text, at):
+            open(os.path.join(t, name), "w").write(text)
+            os.utime(os.path.join(t, name), (at, at))
+
+        def decide_all(t, word, at):
+            items = d.decided_findings(t, d.stages(flow, t))
+            put(t, "findings-decision.md", "Decided: 2026-11-17\n" + "".join(
+                f"- {word} {f['severity']} {f['lens']} [{f['key']}]: {f['summary']}\n" for f in items), at)
+
+        t = make("T-2")
+        for f in REVIEWS:
+            put(t, f, "Verdict: PASS_WITH_FINDINGS\n\n## Findings\n- [high] the hold drops the answer\n", s0 + 10)
+        decide_all(t, "fixed", s0 + 60)
+        for f in REVIEWS:
+            os.utime(os.path.join(t, f), (s0 + 90, s0 + 90))  # re-ran after the round, same finding
+        st = d.stages(flow, t)
+        got = d.task_state(st, [], t, None)
+        assert got["status"] == "findings", f"a re-review still listing a fixed finding opens it again: {got}"
+        items = d.decided_findings(t, st)
+        assert all(f["state"] == "open" and f.get("reopened") for f in items), items
+        full = d.full_state(base, "feat/x", flow, "T-2", t, [], st, None, "", base)
+        assert all(f["view"] == "needs-you" for f in full["findings"]), \
+            f"a reopened finding is the dev's, not the fix loop's: {full['findings']}"
+        decide_all(t, "accepted", s0 + 60)
+        for f in REVIEWS:
+            os.utime(os.path.join(t, f), (s0 + 90, s0 + 90))
+        assert all(f["state"] == "accepted" for f in d.decided_findings(t, d.stages(flow, t))), "accepted stays accepted"
+
+        # Two lenses re-ran clean after the decision, every finding fixed: nothing to decide.
+        t = make("T-3")
+        for f in REVIEWS:
+            put(t, f, "Verdict: PASS\n", s0 + 10)
+        put(t, "04-review-product.md", "Verdict: PASS_WITH_FINDINGS\n\n## Findings\n" +
+            "".join(f"- [medium] product finding {n}\n" for n in range(4)), s0 + 10)
+        decide_all(t, "fixed", s0 + 20)
+        put(t, "04-review-contract.md", "Verdict: PASS\n", s0 + 30)
+        put(t, "04-review-qa.md", "Verdict: PASS\n", s0 + 30)
+        st = d.stages(flow, t)
+        status = d.status(st, [], t)
+        view = d.findings_view(t, st, status)
+        assert status == "ready-for-mr" and view["findings_open"] == 0 and view["findings_reason"] is None, \
+            f"nothing to decide after clean re-runs: {status}, {view['findings_reason']}"
+
+        # A FAIL lens, every finding decided fix, the executor done and the tester next.
+        t = make("T-4")
+        for f in REVIEWS:
+            put(t, f, "Verdict: PASS_WITH_FINDINGS\n\n## Findings\n- [high] one\n- [medium] two\n", s0 + 10)
+        put(t, "04-review-security.md", "Verdict: FAIL\n\n## Findings\n- [high] the token leaks\n", s0 + 10)
+        decide_all(t, "fix", s0 + 20)
+        executor = {"agent": "e2", "type": "executor", "state": "ok", "start": s0 + 30, "end": s0 + 100, "ran": True,
+                    "seen": s0 + 100, "tools": 9}
+        st = d.stages(flow, t)
+        state = d.task_state(st, [executor], t, None)
+        view = d.findings_view(t, st, state["status"])
+        assert state["status"] == "fixing", f"between executor and tester: the fix round: {state}"
+        assert view["findings_open"] == 0 and view["findings_reason"] is None, f"no 'some-open' with 0 open: {view}"
+        put(t, "04-review-qa.md", "Verdict: PASS_WITH_FINDINGS\n\n## Findings\n- [high] one\n- [low] brand new\n", s0 + 200)
+        st = d.stages(flow, t)
+        status = d.status(st, [executor], t)
+        view = d.findings_view(t, st, status)
+        # Two open: "brand new", and "one", which the re-run lens still lists after its fix.
+        assert status == "FAIL" and view["findings_open"] == 2, f"a finding not decided waits on the dev: {status}, {view}"
+    finally:
+        shutil.rmtree(base)
+
+
+def task_owns_branch():
+    """Two tasks in one worktree on different branches (a split story's parts): part 1's PR/MR is
+    found on its recorded branch and kept in mr.json; HEAD moves to part 2's branch: part 1 stays
+    done, part 2 is not; a later failed lookup keeps part 1 done; init records the branch. Both
+    forges: GitLab here, GitHub with the same rule."""
+    d = load_dashboard("dash_owns")
+    base = tempfile.mkdtemp()
+    saved = {k: os.environ.get(k) for k in ("GITLAB_TOKEN", "FORGE_HOST", "GITHUB_TOKEN", "GH_TOKEN")}
+    try:
+        for forge, origin in (("gitlab", "https://gitlab.example/g/p.git"), ("github", "https://github.com/o/p.git")):
+            for k in saved:
+                os.environ.pop(k, None)
+            os.environ["GITLAB_TOKEN"], os.environ["FORGE_HOST"] = "tok-x", "gitlab.example"
+            d._mr_cache.clear()
+            top = os.path.join(base, forge)
+            os.makedirs(top)
+            repo = new_repo(top, origin=origin)
+            wt = os.path.join(top, "wt")
+            git_in(repo, "worktree", "add", "-q", "-b", "feat/T-1-port", wt)
+            pass_all = [(n, "Verdict: PASS\n") for n in REVIEWS]
+            add_task(wt, "T-1", pass_all, current=True)
+            open(os.path.join(wt, ".work", "T-1", "branch"), "w").write("feat/T-1-port\n")
+            found = mr(7, "opened", "T-1 the port", "feat/T-1-port")
+            if forge == "github":
+                found = {"number": 7, "state": "open", "merged_at": None, "html_url": "https://github.com/o/p/pull/7",
+                         "title": "T-1 the port", "created_at": "2026-11-17T00:00:00Z",
+                         "head": {"ref": "feat/T-1-port", "repo": {"full_name": "o/p"}}, "base": {"repo": {"full_name": "o/p"}}}
+            d.FETCH = FetchStub(by_branch={"feat/T-1-port": [found]})
+            listed = lambda now: {k["id"]: k for g in d.list_tasks(repo, now) for k in g["tasks"] if os.path.basename(g["path"]) == "wt"}
+            now = time.time()
+            got = listed(now)
+            assert got["T-1"]["status"] == "done" and json.load(open(os.path.join(wt, ".work", "T-1", "mr.json")))["iid"] == 7, (forge, got["T-1"])
+            git_in(wt, "checkout", "-q", "-b", "feat/T-2-requester")
+            p = subprocess.run(["bash", WORK_SH, "init", "T-2", "part 2"], capture_output=True, text=True,
+                               env=dict(os.environ, CLAUDE_PROJECT_DIR=wt))
+            assert p.returncode == 0, p.stderr
+            assert open(os.path.join(wt, ".work", "T-2", "branch")).read().strip() == "feat/T-2-requester", "init records the task's branch"
+            for n, text in pass_all:
+                open(os.path.join(wt, ".work", "T-2", n), "w").write(text)
+            d._mr_cache.clear()
+            got = listed(now + 1)
+            assert got["T-1"]["status"] == "done" and got["T-2"]["status"] != "done", \
+                f"{forge}: part 1 stays done on its own branch, part 2 is not: {got['T-1']['status']}, {got['T-2']['status']}"
+            os.remove(os.path.join(wt, ".work", "T-1", "mr.json"))
+            d._mr_cache.clear()
+            assert listed(now + 1.5)["T-1"]["status"] == "done", "the lookup uses the task's recorded branch, not HEAD"
+            d._mr_cache.clear()
+            d.FETCH = FetchStub(error=lambda url, h: RuntimeError("down"))
+            assert listed(now + 2)["T-1"]["status"] == "done", f"{forge}: a failed lookup never undoes a kept PR/MR"
+    finally:
+        for k, v in saved.items():
+            if v is None:
+                os.environ.pop(k, None)
+            else:
+                os.environ[k] = v
+        shutil.rmtree(base)
 
 
 def closing_status():
@@ -937,8 +1410,10 @@ def closing_status():
         put("findings-decision.md", "- accepted minor qa: x\n", t0 + 10**9)
         assert state()["status"] == "findings", "a decision file without its 'Decided:' line is not a decision"
         put("findings-decision.md", "Decided: 2026-11-16\n- accepted minor qa: x\n", t0 + 10**9)
-        put("04-review-qa.md", "Verdict: PASS_WITH_FINDINGS\n", t0 + 2 * 10**9)
-        assert state()["status"] == "findings", "a lens re-run after the decision reopens it"
+        put("04-review-qa.md", "Verdict: PASS_WITH_FINDINGS\n\n## Findings\n- [low] x\n", t0 + 2 * 10**9)
+        assert state()["status"] == "ready-for-mr", "a lens re-run that brings only decided findings asks nothing"
+        put("04-review-qa.md", "Verdict: PASS_WITH_FINDINGS\n\n## Findings\n- [low] x\n- [medium] a new one\n", t0 + 2 * 10**9)
+        assert state()["status"] == "findings", "a lens re-run with a finding not decided reopens it"
         os.remove(os.path.join(tdir, "findings-decision.md"))
 
         verdicts("PASS", "PASS", "PASS", "PASS")
@@ -1111,7 +1586,12 @@ def closing_mr():
             return urllib.error.HTTPError(url, 401, f"Unauthorized {headers}", {}, None)
         def boom_404(url, headers):
             return urllib.error.HTTPError(url, 404, "Not Found", {}, None)
+        # The PR/MR found above is kept in mr.json (task_owns_branch): these are lookups of a task
+        # that never had one.
+        kept = os.path.join(feat, ".work", "T-2", "mr.json")
         for boom in (boom_timeout, boom_401, boom_404):
+            if os.path.exists(kept):
+                os.remove(kept)
             d._mr_cache.clear()
             d.FETCH = stub = FetchStub(error=boom)
             got = tasks()
@@ -1119,6 +1599,8 @@ def closing_mr():
             tasks(now + 30)
             assert len(stub.calls) == 1, f"A5: a failure must be cached too: {stub.calls}"
         d._mr_cache.clear()
+        if os.path.exists(kept):
+            os.remove(kept)
         d.FETCH = stub = FetchStub(by_branch={"feat/t-2-x": {"message": "401"}})
         assert tasks()["T-2"]["mr"] == {"error": "unavailable"}, "a body that is not a list is a failure"
         d._mr_cache.clear()
@@ -1189,6 +1671,8 @@ def closing_mr():
         import threading
         for env_token, origin in ((sentinel, "https://gitlab.example/g/p.git"),
                                   (None, f"https://user:{sentinel}@gitlab.example/g/p.git")):
+            if os.path.exists(kept):
+                os.remove(kept)  # the GitHub PR above was kept: this task's lookup must fail here
             d._mr_cache.clear()
             d._seen_tokens.clear()
             os.environ.pop("GITLAB_TOKEN", None)
@@ -1850,7 +2334,8 @@ def findings_view():
             "- accepted medium security: y\n- fix low security: z\n", t0 + 10**9)
         got = view()
         assert got["findings_open"] == 0 and got["findings_reason"] is None \
-            and d.status(d.stages(flow, tdir), [], tdir) == "ready-for-mr", got
+            and d.status(d.stages(flow, tdir), [], tdir) == "fixing", \
+            f"every finding decided, two of them fix-pending: the fix round, never ready for a PR/MR: {got}"
         put("04-review-security.md", "Verdict: PASS_WITH_FINDINGS\n\n## Findings\n- [medium] again\n", t0 + 2 * 10**9)
         got = view()
         assert got["findings_reason"] == "review-newer" and got["findings_review_newer"] == ["security"], got
@@ -1892,6 +2377,40 @@ def findings_view():
     finally:
         shutil.rmtree(base)
 
+
+
+def whole_findings():
+    """Each finding reaches the page whole: its line uncut (full_text) and its details (indented
+    lines, a deeper heading, the items under a heading), masked with the hooks' mask; the summary
+    and the key stay as they were, so a decision recorded before the mask still lands. Task files
+    and the purpose reach the page masked too."""
+    d = load_dashboard("dash_whole")
+    base = tempfile.mkdtemp()
+    try:
+        tdir = os.path.join(base, "T-1")
+        os.makedirs(tdir)
+        flow = json.load(open(FLOW))
+        long = "the export " + "drops rows " * 30 + "at the end"
+        open(os.path.join(tdir, "04-review-qa.md"), "w").write(
+            "Verdict: PASS_WITH_FINDINGS\n\n## Findings\n- [high] " + long + "\n  Scenario: an empty report.\n"
+            "  Fix: PASSWORD=hunter2 in the fixture must go.\n\n### 2. (medium) A heading finding\n\n"
+            "Why it matters.\n\n#### Fix\n- write the test\n\n## Contract coverage\n- x\n")
+        items = d.decided_findings(tdir, d.stages(flow, tdir))
+        assert len(items) == 2, items
+        a, b = items
+        assert len(a["summary"]) == 200 and a["full_text"].endswith("at the end"), a
+        assert "Scenario: an empty report." in a["details"] and "hunter2" not in a["details"], a["details"]
+        assert "Why it matters." in b["details"] and "#### Fix" in b["details"] and "write the test" in b["details"], \
+            f"a deeper heading stays in its finding: {b}"
+        open(os.path.join(tdir, "00-purpose.md"), "w").write("# T-1 x\nAPI_TOKEN=abc123\n")
+        root = new_repo(base)
+        w = os.path.join(root, ".work", "T-1")
+        shutil.copytree(tdir, w)
+        detail = d.task_detail(root, 0, "T-1")
+        assert "abc123" not in detail["purpose"] and "hunter2" not in detail["files"]["04-review-qa.md"], \
+            "the purpose and the review text reach the page masked"
+    finally:
+        shutil.rmtree(base)
 
 
 def closing_docs():
@@ -2075,6 +2594,7 @@ def event_stream():
             c.close()
             time.sleep(0.3)
 
+            d._last_visible[0] = time.time() + 600  # a page in view (page_visibility tests the rule)
             c = open_stream()
             got = read_until(c, b"event: hello", 3)
             assert b" 200 " in got and b"text/event-stream" in got and b"data: {\"seq\": 0}" in got, got
@@ -2119,6 +2639,269 @@ def event_stream():
         finally:
             server.shutdown()
             server.server_close()
+    finally:
+        shutil.rmtree(base)
+
+
+def turn_holds():
+    """One classifier (flow.asks) decides whether a turn asks. Only a turn that asks is held, never
+    one whose session has a subagent running (a fresh .running marker; a stale one is ignored), and
+    a held turn lets go when a subagent starts. A hold that lets go records why and when. Every tool
+    call of a subagent refreshes its marker."""
+    sys.path.insert(0, os.path.join(KIT, "hooks"))
+    import flow as F
+    assert F.asks("Contract written. Go on?") and F.asks("Pick one and let me know.") and F.asks("Responda aqui")
+    assert not F.asks("Executor launched; waiting for it to finish.")
+    assert not F.asks("Is this right? " + "x" * 700), "only the last 600 characters count"
+    root = kit_root()
+    try:
+        adir = os.path.join(root, ".work", "attention")
+        os.makedirs(adir)
+        page = os.path.join(adir, ".page")
+        open(os.path.join(adir, "turns-on"), "w").close()
+        env = dict(os.environ, CLAUDE_PROJECT_DIR=root, KIT_ATTENTION_PID=str(os.getpid()), KIT_ATTENTION_POLL="0.1",
+                   KIT_ATTENTION_HOLD="20")
+        alert = lambda sid: json.load(open(os.path.join(adir, sid, "main.json")))
+
+        def quick(sid, text):
+            open(page, "w").close()
+            t0 = time.monotonic()
+            p = subprocess.run([sys.executable, ATTN, "turn"], input=json.dumps(
+                {"hook_event_name": "Stop", "session_id": sid, "last_assistant_message": text}),
+                capture_output=True, text=True, env=env)
+            return p.stdout, time.monotonic() - t0
+
+        out, took = quick("i1", "Executor launched; waiting for it to finish.")
+        a = alert("i1")
+        assert out == "" and took < 5 and a["held"] is False and a["kind"] == "turn" and "released" not in a, \
+            f"a turn that asks nothing is not held, its alert still raised: {a}"
+        marker = os.path.join(adir, "i2", ".running", "agent-x")
+        os.makedirs(os.path.dirname(marker))
+        open(marker, "w").close()
+        out, took = quick("i2", "Contract written. Go on?")
+        assert out == "" and took < 5 and alert("i2")["held"] is False, "never held while a subagent of the session runs"
+        old = time.time() - 20 * 60
+        os.utime(marker, (old, old))
+        # A subagent's tool call refreshes its marker; the main session's does not create one.
+        p = subprocess.run([sys.executable, HOOK], input=json.dumps(
+            {"hook_event_name": "PostToolUse", "session_id": "i2", "agent_id": "agent-x", "tool_name": "Read"}),
+            capture_output=True, text=True, env=env)
+        assert time.time() - os.path.getmtime(marker) < 60, "a subagent's tool call keeps its marker fresh"
+        os.utime(marker, (old, old))
+
+        proc = subprocess.Popen([sys.executable, ATTN, "turn"], stdin=subprocess.PIPE, stdout=subprocess.PIPE,
+                                stderr=subprocess.PIPE, text=True, env=env)
+        open(page, "w").close()
+        proc.stdin.write(json.dumps({"hook_event_name": "Stop", "session_id": "i2", "last_assistant_message": "Go on?"}))
+        proc.stdin.close()
+        for _ in range(100):
+            if os.path.exists(os.path.join(adir, "i2", "main.json")) and alert("i2").get("held"):
+                break
+            os.utime(page)
+            time.sleep(0.05)
+        assert alert("i2")["held"], "a stale marker (a killed subagent) does not stop the hold"
+        os.utime(marker)  # a subagent of the session starts working
+        proc.wait(10)
+        a = alert("i2")
+        assert proc.stdout.read() == "" and a["held"] is False and a["released"] == "agent-running" \
+            and isinstance(a.get("released_at"), float), f"a held turn lets go when a subagent starts, and says why: {a}"
+
+        # A question released from the page says so.
+        open(os.path.join(adir, "answers-on"), "w").close()
+        proc = subprocess.Popen([sys.executable, ATTN, "hold"], stdin=subprocess.PIPE, stdout=subprocess.PIPE,
+                                stderr=subprocess.PIPE, text=True, env=env)
+        open(page, "w").close()
+        proc.stdin.write(json.dumps(ask("q1")))
+        proc.stdin.close()
+        path = os.path.join(adir, "q1", "main.json")
+        for _ in range(100):
+            if os.path.exists(path) and json.load(open(path)).get("held"):
+                break
+            os.utime(page)
+            time.sleep(0.05)
+        open(path[:-len(".json")] + ".release", "w").close()
+        proc.wait(10)
+        a = json.load(open(path))
+        assert a["held"] is False and a["released"] == "released" and a["released_at"], a
+        d = load_dashboard("dash_released")
+        got = {x["session"]: x for x in d.alerts(os.path.join(root, ".work"), time.time())}
+        assert got["q1"]["released"] == "released" and got["i2"]["released"] == "agent-running" \
+            and got["i1"]["released"] is None, "the server says why a hold let go, and nothing for one never held"
+        # A hold killed without a word (still marked held, heartbeat stale) reads "stopped".
+        json.dump({**{k: v for k, v in a.items() if k not in ("released", "released_at")}, "held": True,
+                   "heartbeat": time.time() - 60}, open(path, "w"))
+        assert {x["session"]: x for x in d.alerts(os.path.join(root, ".work"), time.time())}["q1"]["released"] == "stopped"
+    finally:
+        shutil.rmtree(root)
+
+
+def page_visibility():
+    """Only a page in view keeps a hold: a poll from a hidden tab does not mark the page alive, nor
+    does the event stream once no page said it is in view for VISIBLE_FOR seconds."""
+    d = load_dashboard("dash_visible")
+    root = kit_root()
+    try:
+        adir = os.path.join(root, ".work", "attention")
+        os.makedirs(adir)
+        page = os.path.join(adir, ".page")
+        open(page, "w").close()
+        old = time.time() - 120
+        os.utime(page, (old, old))
+        d._last_visible[0] = 0.0
+        d.list_attention(root, visible=False)
+        assert os.path.getmtime(page) < time.time() - 60, "a hidden tab's poll does not keep the holds"
+        d.touch_pages(root)
+        assert os.path.getmtime(page) < time.time() - 60, "nor the event stream, with no page in view"
+        d.list_attention(root, visible=True)
+        assert os.path.getmtime(page) > time.time() - 5, "a page in view keeps them"
+        os.utime(page, (old, old))
+        d.touch_pages(root)
+        assert os.path.getmtime(page) > time.time() - 5, "the stream keeps them while a page was in view lately"
+    finally:
+        shutil.rmtree(root)
+
+
+def alert_text():
+    """The page gets a turn's whole last message (its last 8000 characters), masked by the
+    server with its own copy of the hooks' mask whatever the worktree's hook wrote; an alert of an
+    older hook without the message falls back to the session's transcript."""
+    d = load_dashboard("dash_alert_text")
+    root = os.path.realpath(kit_root())
+    config = tempfile.mkdtemp()
+    saved = os.environ.get("CLAUDE_CONFIG_DIR")
+    try:
+        sdir = os.path.join(root, ".work", "attention", "s-long")
+        os.makedirs(sdir)
+        long = "x" * 9000 + " PASSWORD=hunter2 card 4111 1111 1111 1111. Shall I go on?"
+        json.dump({"kind": "turn", "since": time.time(), "detail": "token=abc123", "message": long},
+                  open(os.path.join(sdir, "main.json"), "w"))
+        old = os.path.join(root, ".work", "attention", "s-old")
+        os.makedirs(old)
+        json.dump({"kind": "turn", "since": time.time(), "detail": "Done with the contract."},
+                  open(os.path.join(old, "main.json"), "w"))
+        key = re.sub(r"[^A-Za-z0-9]", "-", root)
+        os.makedirs(os.path.join(config, "projects", key))
+        with open(os.path.join(config, "projects", key, "s-old.jsonl"), "w") as f:
+            f.write(json.dumps({"type": "user", "message": {"content": "hi"}}) + "\n")
+            f.write(json.dumps({"type": "assistant", "message": {"content": [
+                {"type": "text", "text": "Done with the contract. Secret=s3cr3t. Which option, A or B?"}]}}) + "\n")
+        os.environ["CLAUDE_CONFIG_DIR"] = config
+        got = {a["session"]: a for a in d.list_attention(root)[0]["alerts"]}
+        msg = got["s-long"]["message"]
+        assert len(msg) <= 8000 and msg.endswith("Shall I go on?") and "hunter2" not in msg and "4111" not in msg, msg[-120:]
+        assert "abc123" not in got["s-long"]["detail"], "the detail is masked again by the server"
+        assert got["s-old"]["message"].endswith("Which option, A or B?") and "s3cr3t" not in got["s-old"]["message"], \
+            f"an older hook's alert reads the transcript's last text: {got['s-old']['message']}"
+    finally:
+        if saved is None:
+            os.environ.pop("CLAUDE_CONFIG_DIR", None)
+        else:
+            os.environ["CLAUDE_CONFIG_DIR"] = saved
+        shutil.rmtree(root)
+        shutil.rmtree(config)
+
+
+def turn_awaits():
+    """A "your turn" waits on the dev (awaits) when held, or when no subagent of its session runs and
+    its message's end asks something or it has stood 2 minutes; one that waits only by those 2
+    minutes is idle. A question or permission always waits. A running marker counts while it is
+    fresh, or while its agent logs tool events (an older hook's marker); a stale one is ignored."""
+    d = load_dashboard("dash_awaits")
+    root = kit_root()
+    try:
+        w = os.path.join(root, ".work")
+        now = time.time()
+        sdir = os.path.join(w, "attention", "s1")
+        os.makedirs(sdir)
+        base = {"kind": "turn", "session": "s1", "since": now - 10}
+        assert d.awaits({**base, "message": "Contract written. Go on?"}, w, now)
+        assert not d.awaits({**base, "message": "Executor launched."}, w, now), "a progress note does not wait"
+        old = {**base, "since": now - 200, "message": "Executor finished."}
+        assert d.awaits(old, w, now) and d.idle_only(old), "two minutes with nothing resuming it: idle"
+        assert not d.idle_only({**base, "message": "Pick A or B?"}), "a turn that asks is never idle"
+        assert d.awaits({**base, "held": True, "message": "Executor launched."}, w, now), "a held turn always waits"
+        assert d.awaits({"kind": "question", "session": "s1", "since": now}, w, now)
+        marker = os.path.join(sdir, ".running", "agent-1")
+        os.makedirs(os.path.dirname(marker))
+        open(marker, "w").close()
+        assert not d.awaits({**base, "message": "Go on?"}, w, now), "a fresh running marker: the session works"
+        os.utime(marker, (now - 3600, now - 3600))
+        assert d.awaits({**base, "message": "Go on?"}, w, now), "a stale marker is ignored"
+        open(os.path.join(w, "events.jsonl"), "w").write(json.dumps(
+            {"t": now - 30, "work": "T-1", "agent": "agent-1", "ev": "tool", "tool": "Read"}) + "\n")
+        assert not d.awaits({**base, "message": "Go on?"}, w, now), "a marker whose agent logs tool events counts"
+        os.makedirs(os.path.join(w, "attention", "s2"))
+        json.dump({"kind": "turn", "since": now - 300, "detail": "Report written.", "message": "Report written."},
+                  open(os.path.join(w, "attention", "s2", "main.json"), "w"))
+        got = {a["session"]: a for a in d.list_attention(root)[0]["alerts"]}
+        assert got["s2"]["awaits"] and got["s2"]["idle"], got["s2"]
+    finally:
+        shutil.rmtree(root)
+
+
+def findings_decided_message():
+    """A held turn told that the findings are decided gets the server's own message, never one the
+    page built; any other kind or a bad task id is refused and writes nothing."""
+    d = load_dashboard("dash_decided_msg")
+    root = kit_root()
+    try:
+        sdir = os.path.join(root, ".work", "attention", "s1")
+        os.makedirs(sdir)
+        json.dump({"kind": "turn", "since": time.time(), "detail": "x", "qid": "Q1", "held": True, "heartbeat": time.time()},
+                  open(os.path.join(sdir, "main.json"), "w"))
+        body = {"wt": 0, "session": "s1", "agent": "main", "qid": "Q1"}
+        assert d.answer(root, {**body, "kind": "anything", "id": "T-1"})[0] == 400
+        assert d.answer(root, {**body, "kind": "findings-decided", "id": "../x"})[0] == 400
+        assert not os.path.exists(os.path.join(sdir, "main.answer.json")), "a refused body writes nothing"
+        assert d.answer(root, {**body, "kind": "findings-decided", "id": "T-1", "message": "rm -rf /"})[0] == 200
+        got = json.load(open(os.path.join(sdir, "main.answer.json")))
+        assert got["message"] == d.FINDINGS_DECIDED.format(id="T-1"), got
+    finally:
+        shutil.rmtree(root)
+
+
+def triage_task():
+    """A linked worktree named after a KEY (or with `work.sh triage <ID>` recorded), a live session
+    and no task directory lists one synthetic triage task; the main checkout or another name does
+    not; Mark as done refuses it; a dead session lists nothing; the real task replaces it."""
+    d = load_dashboard("dash_triage")
+    base = tempfile.mkdtemp()
+    try:
+        repo = new_repo(base)
+        wt, odd = os.path.join(base, "abc-12"), os.path.join(base, "spike")
+        git_in(repo, "worktree", "add", "-q", "-b", "w-abc-12", wt)
+        git_in(repo, "worktree", "add", "-q", "-b", "w-spike", odd)
+        now = time.time()
+
+        def session(w, pid):
+            adir = os.path.join(w, ".work", "attention", "s1")
+            os.makedirs(adir, exist_ok=True)
+            open(os.path.join(adir, ".session"), "w").write(json.dumps({"claude_pid": pid, "since": now}))
+
+        listed = lambda: {g["name"]: g["tasks"] for g in d.list_tasks(repo, now)}
+        assert listed() == {}, "no session, no task: nothing listed"
+        for w in (wt, odd, repo):
+            session(w, os.getpid())
+        got = listed()
+        assert set(got) == {"abc-12"}, got
+        [k] = got["abc-12"]
+        assert k["id"] == "ABC-12" and k["triage"] and k["status"] == "triage" and k["stages"][0]["agent"] == "triage", k
+        assert not any(x["written"] for x in k["stages"]) and not k["closable"] and not k["cleanable"]
+        wi = next(i for i, (p, _) in enumerate(d.worktrees(repo)) if os.path.basename(p) == "abc-12")
+        assert d.task_detail(repo, wi, "ABC-12", now)["status"] == "triage"
+        assert d.close_task(repo, {"wt": wi, "id": "ABC-12"}, now)[0] == 404
+        p = subprocess.run(["bash", WORK_SH, "triage", "SPK-7"], capture_output=True, text=True, env=dict(os.environ, CLAUDE_PROJECT_DIR=odd))
+        assert p.returncode == 0, p.stderr
+        assert [k["id"] for k in listed()["spike"]] == ["SPK-7"], "a recorded key names the triage"
+        assert subprocess.run(["bash", WORK_SH, "triage", "bad"], capture_output=True, env=dict(os.environ, CLAUDE_PROJECT_DIR=odd)).returncode != 0
+        dead = subprocess.Popen(["true"])
+        dead.wait()
+        session(wt, dead.pid)
+        assert "abc-12" not in listed(), "a dead session lists nothing"
+        session(wt, os.getpid())
+        add_task(wt, "ABC-12")
+        [k] = listed()["abc-12"]
+        assert k["status"] != "triage" and "triage" not in k, k
     finally:
         shutil.rmtree(base)
 
