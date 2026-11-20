@@ -552,7 +552,9 @@ def hold_turn(event, flow):
     # Only a turn that asks something is held, never one whose session has a subagent running:
     # while the Stop is held the session cannot take its subagent's completion and wake by itself,
     # and it sat blocked on a progress note while the page showed nothing to answer.
-    holdable = (awaiting or F.asks(text)) and not subagent_running(flow, session)
+    if subagent_running(flow, session):
+        return 0
+    holdable = awaiting or F.asks(text)
     path_now = F.alert_path(flow, session, "main")
 
     def let_go():

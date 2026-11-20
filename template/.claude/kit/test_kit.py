@@ -341,7 +341,7 @@ def projects_server():
             assert get("/api/tasks?p=7")[0] == 404 and get("/flow.json?p=7")[0] == 404, "an unknown project is a 404"
             code, body = get("/api/projects")
             assert code == 200 and [x["name"] for x in json.loads(body)] == ["alpha", "beta"], body
-            assert get("/api/attention?p=1")[0] == 200 and os.path.exists(os.path.join(beta, ".work", "attention", ".page")), \
+            assert get("/api/attention?p=1&visible=1")[0] == 200 and os.path.exists(os.path.join(beta, ".work", "attention", ".page")), \
                 "the project on screen counts as an open page"
         finally:
             server.shutdown()
@@ -2782,7 +2782,8 @@ def turn_holds():
         os.makedirs(os.path.dirname(marker))
         open(marker, "w").close()
         out, took = quick("i2", "Contract written. Go on?")
-        assert out == "" and took < 5 and alert("i2")["held"] is False, "never held while a subagent of the session runs"
+        assert out == "" and took < 5 and not os.path.exists(os.path.join(adir, "i2", "main.json")), \
+            "a session with a running subagent does not raise a turn alert"
         old = time.time() - 20 * 60
         os.utime(marker, (old, old))
         # A subagent's tool call refreshes its marker; the main session's does not create one.

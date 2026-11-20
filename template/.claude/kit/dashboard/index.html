@@ -62,7 +62,7 @@
   .task .t { display:flex; gap:6px; align-items:center; min-width:0 } .task .id { font-weight:600; white-space:nowrap }
   .task .sub { color:var(--mute); font-size:12px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis }
   .credit { display:block; padding:14px 0 0; color:var(--mute); font-size:11px; text-decoration:none } .credit:hover { color:var(--accent) }
-  .badge { display:inline-block; min-width:18px; text-align:center; font-size:11px; font-weight:700; color:#fff; background:var(--bad); border-radius:9px; padding:0 6px; margin-left:6px }
+  .badge { display:inline-block; min-width:18px; text-align:center; font-size:11px; font-weight:700; color:#111; background:var(--warn); border-radius:9px; padding:0 6px; margin-left:6px }
   /* badges */
   .st { font-size:11px; border:1px solid var(--line); border-radius:3px; padding:0 7px; margin-left:auto; white-space:nowrap }
   .st.running, .st.fixing { color:var(--run); border-color:var(--run) } .st.done, .st.ready-for-mr, .st.ready-to-close { color:var(--ok); border-color:var(--ok) }
@@ -307,9 +307,15 @@
 <div class="center"><div id="plan" class="plan"></div></div>
 <section class="side">
 <section class="waiting" id="waiting" hidden>
-<h2 id="waiting-title" data-i18n="waiting.title">Waiting on you</h2>
-<div class="cards" id="attn"></div>
-<div class="cards" id="todo" style="margin:0 0 8px"></div>
+<div id="needs">
+<h2 id="waiting-title" data-i18n="waiting.title">Waiting on you <span id="needs-count" aria-live="polite"></span></h2>
+<div class="ngroup" data-group="answer"><h3 class="ngroup-h"></h3><div class="cards nlist" id="attn"></div></div>
+<div class="ngroup" data-group="approve"><h3 class="ngroup-h"></h3><div class="cards nlist" id="needs-approve"></div></div>
+<div class="ngroup" data-group="decide"><h3 class="ngroup-h"></h3><div class="cards nlist" id="needs-decide"></div></div>
+<div class="ngroup" data-group="ship"><h3 class="ngroup-h"></h3><div class="cards nlist" id="todo" style="margin:0 0 8px"></div></div>
+<div class="ngroup" data-group="idle"><h3 class="ngroup-h"></h3><div class="cards nlist" id="needs-idle"></div></div>
+<details class="ngroup" data-group="progress" hidden><summary class="ngroup-h"></summary><div class="cards nlist" id="needs-progress"></div></details>
+</div>
 </section>
 <div class="meta" id="legend" style="margin-top:8px"></div>
 <div class="tabs"><button type="button" data-tab="tree" data-i18n="tab.tree">Steps</button><button type="button" data-tab="office" data-i18n="tab.office">Office</button></div>
@@ -1518,6 +1524,7 @@ async function render() {
 // the rest; done tasks with nothing to do sit in a closed "Done (n)".
 const RUNNING = ["running", "fixing"], BAD = ["FAIL", "blocked"];
 let sideFilter = "";
+const pending = (wt) => needItems.filter(i => i.wt === wt && NEED_GROUPS.includes(i.group)).length;
 function sideCounts(groups) {
   const per = new Map(), loose = new Map();
   needItems.filter(i => NEED_GROUPS.includes(i.group) && i.wt != null).forEach(i => {
@@ -1548,7 +1555,7 @@ function renderSide(groups) {
     const live = ks.filter(x => !(x.k.status === "done" && !x.n)).sort((a, b) => sideRank(a.k, a.n) - sideRank(b.k, b.n));
     done.push(...ks.filter(x => x.k.status === "done" && !x.n).map(x => ({ g, ...x })));
     const extra = loose.get(g.wt) || 0, grouped = g.tasks.length > 1;
-    if (!live.length && !extra) return;
+    if (!live.length && !extra && !pending(g.wt)) return;
     const head = grouped || (!g.tasks.length && extra) || (extra && live.length !== 1)
       ? `<div class="wt" title="${esc(extra ? t("side.wt-items") : "")}">${extra ? '<i class="sdot amber" aria-hidden="true"></i> ' : ""}<b>${esc(g.name)}</b>${g.branch ? " · " + esc(g.branch) : ""}${g.here ? " · " + t("here") : ""}${extra ? `<span class="badge" title="${esc(t("side.items", { n: extra }))}">${extra}</span>` : ""}</div>` : "";
     blocks.push({ rank: Math.min(extra ? 0 : 9, ...live.map(x => sideRank(x.k, x.n))), html: head + live.map(x => sideRow(g, x.k, x.n, grouped)).join("") });
@@ -1652,32 +1659,8 @@ function select(wt, id) {
 // What waits on the dev besides the alerts: memory requests, failed PR/MR checks, tasks whose
 // next move is the dev's, done tasks to clean. Each ends with its action and a whole command.
 function showTodo(groups) {
-  const items = [], done = [];
-  attention.forEach(g => {
-    (g.memory_actions || []).forEach(m => items.push(`<div class="alert"><b>${esc(g.name)}</b> · ${esc(m.id)}<div class="action">${t("action.open-session", { wt: g.name, path: g.path || g.name, id: m.id })}</div>${cmdBlock(m.command)}</div>`));
-    if (g.mr_check)
-      items.push(`<div class="alert mr-unchecked"><div class="head"><b>${esc(g.name)}</b>${statusBadge("mr-unchecked")}</div><div class="action">${t("action.fix-mr-check", { wt: g.name, error: g.mr_check.error, ids: (g.mr_check.tasks || []).join(", ") })}</div>${cmdBlock(g.mr_check.command)}</div>`);
-  });
-  const checked = new Set(attention.filter(g => g.mr_check).map(g => g.wt));
-  groups.forEach(g => g.tasks.forEach(k => {
-    if (sel && g.wt === sel.wt && k.id === sel.id) return;
-    const s = shown(k);
-    if (s === "mr-unchecked" && checked.has(g.wt)) return;
-    if (["findings", "FAIL", "ready-for-mr", "mr-unchecked", "ready-to-close"].includes(s) && k.next_step !== "fix-loop") {
-      const next = k.next_step && has("next." + k.next_step) ? t("next." + k.next_step, { id: k.id, wt: g.name, error: (k.mr && k.mr.error) || "" }) : esc(k.next_step || "");
-      items.push(`<div class="alert ${esc(s)}"><div class="head"><b>${esc(g.name)}</b> · ${esc(k.id)}${statusBadge(s)}</div><div class="action">${next}</div>${cmdBlock(k.command)}<div class="actions"><button data-go="${g.wt}" data-id="${esc(k.id)}">${t("todo.open")}</button></div></div>`);
-    }
-    if (k.status === "done") done.push(`${g.name}/${k.id}`);
-  }));
-  if (done.length)
-    items.push(`<div class="alert done">${t("todo.clean", { n: done.length, ids: done.join(", ") })}<div class="actions"><button id="clean-all" class="danger">${t("clean.all")}</button></div></div>`);
-  setHTML($("todo"), items.join(""));
-  $("todo").querySelectorAll("[data-go]").forEach(b => b.onclick = () => select(+b.dataset.go, b.dataset.id));
-  if ($("clean-all")) $("clean-all").onclick = () => openCleanup("all=done", true);
-  const waiting = attention.some(g => g.alerts.some(a => !(sel && g.wt === sel.wt) && !inChat(a, g.wt))) || items.length;
-  $("waiting-title").innerHTML = t(sel ? "waiting.elsewhere" : "waiting.title");
-  $("waiting").hidden = !waiting;
-  setHTML($("legend"), (waiting ? "" : t("waiting.none") + " ") + `<details><summary>${t("legend.more")}</summary>${t("legend.text")}</details>`);
+  // The needs list is rendered from buildNeeds() in showAttention(), so this legacy entry point
+  // intentionally does not render a second, competing list.
 }
 
 
@@ -1889,7 +1872,6 @@ function markSeen(row) {
 let needCount = 0;
 function showAttention() {
   const every = attention.flatMap(g => g.alerts.map(a => ({ ...a, wt: g.wt, wtName: g.name, answers: g.answers, turns: g.turns, path: g.path })));
-  document.title = (every.length ? `(${every.length}) ` : "") + "Foreman";
   const all = every.filter(a => !(lastTask && sel && a.wt === sel.wt) && !inChat(a, a.wt) && !dismissed.has(akey(a)));
   const hidden = every.filter(a => dismissed.has(akey(a)));
   const key = (a) => [a.wt, a.session, a.agent, a.kind, a.since].join("/");
@@ -1904,18 +1886,29 @@ function showAttention() {
   });
   needItems = buildNeeds(lastGroups);
   needCount = needItems.filter(i => NEED_GROUPS.includes(i.group)).length;
+  document.title = (needCount ? `(${needCount}) ` : "") + "Foreman";
   // Re-rendered only when the set changes, so a half-written answer survives the refresh.
-  const sig = JSON.stringify([lang, all.map(a => [key(a), a.held, a.qid, a.answers, a.turns]), hidden.length]);
+  const sig = JSON.stringify([lang, needItems.map(i => [i.key, i.group, i.say, i.badge, i.primary]), hidden.length]);
   if (sig === attnSig) return;
   attnSig = sig;
-  $("attn").innerHTML = all.map((a, n) => {
-    const who = a.agent === "main" ? t("alert.main") : t("alert.agent", { id: a.agent.slice(0, 12) });
-    return `<div class="alert ${esc(a.kind)}" data-n="${n}"><div class="head">${HAND(16)} <button type="button" class="dismiss" data-dismiss="${esc(akey(a))}" title="${esc(t("dismiss"))}">×</button><b>${esc(a.wtName)}</b> · <span>${t("kind." + a.kind)}</span> · ${who} · <span class="meta">${t("alert.since", { time: new Date(a.since * 1000).toLocaleTimeString(lang === "pt" ? "pt-BR" : "en") })}</span></div><div class="meta">${t("kind." + a.kind + ".m")}</div>${alertBody(a, n, "w")}</div>`;
-  }).join("");
-  if (hidden.length) $("attn").insertAdjacentHTML("beforeend", `<details class="dismissed"><summary>${t("dismissed.count", { n: hidden.length })}</summary>${hidden.map(a => `<div class="alert ${esc(a.kind)}"><b>${esc(a.wtName)}</b> · ${t("kind." + a.kind)} <button type="button" data-restore="${esc(akey(a))}">${t("dismiss.restore")}</button></div>`).join("")}</details>`);
-  $("attn").querySelectorAll("[data-dismiss]").forEach(b => b.onclick = () => { dismissed.add(b.dataset.dismiss); saveDismissed(); attnSig = ""; tick() });
-  $("attn").querySelectorAll("[data-restore]").forEach(b => b.onclick = () => { dismissed.delete(b.dataset.restore); saveDismissed(); attnSig = ""; tick() });
-  wireAlerts($("attn"), all, "w");
+  $("needs-count").textContent = needCount ? `(${needCount})` : "";
+  const ids = { answer: "attn", approve: "needs-approve", decide: "needs-decide", ship: "todo", idle: "needs-idle", progress: "needs-progress" };
+  NEED_GROUPS.concat(["idle", "progress"]).forEach(group => {
+    const rows = needItems.filter(i => i.group === group).map(i => ({ key: i.key, html: needRowHTML(i) }));
+    const list = $(ids[group]);
+    patchRows(list, rows);
+    const box = list.closest(".ngroup");
+    box.hidden = !rows.length;
+    const label = box.querySelector(".ngroup-h");
+    label.textContent = `${t("needs.g." + group)} · ${rows.length}`;
+    if (group === "progress") box.open = false;
+  });
+  $("waiting").hidden = needItems.length === 0;
+  const s = seenSet();
+  document.querySelectorAll("[data-row]").forEach(r => {
+    const d = r.querySelector("[data-new]");
+    if (d) d.hidden = s.has(r.dataset.row);
+  });
 }
 // A look at a row (pointer, focus, click) marks it seen; its buttons open, decide, go or dismiss.
 ["mouseover", "focusin", "click"].forEach(evn => $("waiting").addEventListener(evn, (e) => {
