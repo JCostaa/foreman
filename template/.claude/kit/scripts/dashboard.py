@@ -49,6 +49,7 @@ wrote its `closed` marker. Also run as:
 """
 import hashlib
 import hmac
+import importlib.util
 import http.server
 import json
 import os
@@ -60,6 +61,7 @@ import shutil
 import socket
 import subprocess
 import sys
+import textwrap
 import threading
 import time
 import urllib.error
@@ -68,6 +70,19 @@ import urllib.request
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import decisions  # noqa: E402  who acts on each finding; the session told of page decisions
+
+# The hooks' own masking and turn classifier, from the server's copy of the kit (never a
+# worktree's copy, whose hook may be older or edited).
+_FLOW_SPEC = importlib.util.spec_from_file_location(
+    "kit_flow_mask", os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "hooks", "flow.py"))
+_FLOW = importlib.util.module_from_spec(_FLOW_SPEC)
+_FLOW_SPEC.loader.exec_module(_FLOW)
+
+
+def mask_text(text):
+    """The hooks' mask on a file's text; None (a file that could not be read) stays None."""
+    return _FLOW.mask(text) if isinstance(text, str) else text
+
 
 KIT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 ID_RX = re.compile(r"[A-Za-z0-9._-]+")
@@ -91,7 +106,8 @@ LOCAL_HOSTS = ("127.0.0.1", "localhost")
 
 # Values the page translates (index.html); stage agent names of flow.json are statuses too,
 # returned while the task is between stages.
-STATUSES = ("purpose", "running", "blocked", "clarify", "findings", "fixing", "ready-for-mr", "done", "FAIL")
+# "triage" is only the synthetic task of a worktree whose session has not run `work.sh init` yet.
+STATUSES = ("purpose", "running", "blocked", "clarify", "findings", "fixing", "ready-for-mr", "done", "FAIL", "triage")
 NEXT_STEPS = ("contract", "change", "proof", "reviews", "wait", "unblock", "clarify", "fix-fail",
               "decide-findings", "wait-fixes", "fix-loop", "open-mr", "fix-mr-check", "mark-done", "clean-up")
 WARNINGS = ("fail-unresolved",)
@@ -226,10 +242,12 @@ def agents(evs, now):
             continue
         a = lanes.setdefault(e.get("agent") or "main", {
             "agent": e.get("agent") or "main", "type": e.get("type") or "main",
-            "state": "", "tools": 0, "start": e.get("t", 0)})
+            "state": "", "tools": 0, "start": e.get("t", 0), "ran": False})
         ev = e.get("ev")
         if ev == "start":
-            a.update(state="running", start=e.get("t", 0), summary=None, end=None)
+            # ran: a start event was seen, so "start" is when the agent began and not merely the
+            # first event left in the log tail; the fix round trusts only those.
+            a.update(state="running", start=e.get("t", 0), summary=None, end=None, ran=True)
         elif ev == "tool":
             # A blocked agent was sent back to write its file: a tool call means it is at it.
             if a["state"] == "blocked":
@@ -250,36 +268,76 @@ def agents(evs, now):
     return sorted(lanes.values(), key=lambda a: a["seen"], reverse=True)
 
 
+NOT_APPLICABLE_RX = re.compile(r"^##\s+Not applicable\s*$", re.M | re.I)
+# The contract reviewer re-runs every fix round; the other lenses only when their last review had
+# findings.
+ALWAYS_RERUN = "reviewer"
+
+
 def stages(flow, tdir):
+    """Each stage of flow.json with its file state; a review also says whether it is "not
+    applicable" (a PASS with a `## Not applicable` section; a FAIL stays a FAIL) and whether it needs no re-run
+    in a fix round (`settled`: a lens other than the contract reviewer whose last review is a PASS,
+    so it had no finding to fix)."""
     out = []
     for agent, st in (flow.get("stages") or {}).items():
         text = read(os.path.join(tdir, st.get("file", "")))
         m = WORD_RX.search(text or "")
         word = m.group(1) if m else None
+        review = bool(st.get("verdict"))
+        verdict = word if review else None
         out.append({"agent": agent, "file": st.get("file"), "written": text is not None,
-                    "needs_verdict": bool(st.get("verdict")),
-                    "verdict": word if st.get("verdict") else None, "status": None if st.get("verdict") else word,
-                    "open": len(MARKER_RX.findall(text or ""))})
+                    "needs_verdict": review, "verdict": verdict, "status": None if review else word,
+                    "open": len(MARKER_RX.findall(text or "")),
+                    "na": review and verdict == "PASS" and bool(text and NOT_APPLICABLE_RX.search(text)),
+                    "settled": review and agent != ALWAYS_RERUN and verdict == "PASS"})
     return out
 
 
 def status(stage_list, lanes, tdir=None):
-    """FAIL > findings | ready-for-mr > blocked > clarify > running > the last stage written.
-    "done" is not here: only a PR/MR, a merge or `work.sh done` closes a task (task_state). A stage let through on the retry with its gate failed is FAIL, as `work.sh
+    """FAIL > findings | fixing | ready-for-mr > blocked > clarify > running > the last stage
+    written. "done" is not here: only a PR/MR, a merge or `work.sh done` closes a task
+    (task_state). A stage let through on the retry with its gate failed is FAIL, as `work.sh
     status` says."""
     verdicts = [s for s in stage_list if s["needs_verdict"]]
     # Only the latest run of each stage counts: a re-run that passed the gate clears the old one.
     latest = {}
     for a in sorted(lanes, key=lambda a: a["seen"]):
         latest[a["type"]] = a
-    if any(s["verdict"] == "FAIL" for s in stage_list) or any(a["state"] == "failed" for a in latest.values()):
+    if any(a["state"] == "failed" for a in latest.values()):
+        return "FAIL"
+    header = (read(os.path.join(tdir, "findings-decision.md"), 200) or "").startswith("Decided:") if tdir else False
+    if any(s["verdict"] == "FAIL" for s in stage_list):
+        # A FAIL waits on the dev while its findings are undecided, and comes back when a re-review
+        # fails again (the new review reopens the decision). Decided, with a fix pending or a flow
+        # agent at work, it is the fix round: the page said FAIL while the executor fixed.
+        failed = [s for s in verdicts if s["verdict"] == "FAIL" and s["written"]]
+        items = decided_findings(tdir, stage_list)
+        if items and header and not any(f["decision"] is None for f in items) and findings_decided(tdir, failed) and (
+                any(f["state"] == "fix-pending" for f in items) or flow_agent_running(stage_list, lanes)):
+            return "fixing"
         return "FAIL"
     if verdicts and all(s["verdict"] for s in verdicts):
         # Decided means every finding the page shows has a decision line, not only that a
         # decision file is newer than the reviews: one line must not settle three findings.
-        if any(s["verdict"] == "PASS_WITH_FINDINGS" for s in verdicts) and not (
-                findings_decided(tdir, verdicts) and not any(f["decision"] is None for f in decided_findings(tdir, stage_list))):
+        with_findings = any(s["verdict"] == "PASS_WITH_FINDINGS" for s in verdicts)
+        items = decided_findings(tdir, stage_list) if with_findings else []
+        # Something to decide: a finding with no decision line, or findings the dev never dated a
+        # decision for. A lens re-run that brings no undecided finding (a PASS, or findings already
+        # decided) asks nothing: the page asked to decide with 0 open after two lenses re-ran clean.
+        if with_findings and (any(f["decision"] is None for f in items) or not header):
             return "findings"
+        # A fix round is not ready for a PR/MR: a finding decided fix and not yet fixed, an agent
+        # of the flow at work, or a stage whose file an earlier stage's agent will rewrite (the
+        # page read ready-for-mr while the executor of the fix round ran).
+        why = fix_round(stage_list, lanes, tdir, items)
+        if why in ("pending", "agent"):
+            return "fixing"
+        if why == "stale":
+            # Every fix is in and nothing runs, but a lens has not re-read the round's work: the
+            # task is paused before its reviews, as the terminal shows, not running.
+            before = [s["agent"] for s in stage_list if not s["needs_verdict"] and s["written"] and s["agent"] != "retrospective"]
+            return before[-1] if before else "fixing"
         return "ready-for-mr"
     # Only subagents can be blocked: agents() sets main to running or idle.
     if any(a["state"] == "blocked" for a in lanes) or any(s["status"] in ("BLOCKED", "NEEDS_CONTEXT") for s in stage_list):
@@ -290,6 +348,40 @@ def status(stage_list, lanes, tdir=None):
         return "running"
     written = [s["agent"] for s in stage_list if s["written"]]
     return written[-1] if written else "purpose"
+
+
+def flow_agent_running(stage_list, lanes):
+    """An agent of a flow stage at work: a general-purpose subagent the session runs for itself
+    is no stage of the task and does not hold it."""
+    types = {s["agent"] for s in stage_list}
+    return any(a["type"] in types and a["state"] == "running" for a in lanes)
+
+
+def fix_round(stage_list, lanes, tdir, items):
+    """Why the task is not ready for a PR/MR after its reviews, or None: "pending" while a finding
+    decided fix is not fixed, "agent" while a flow agent runs, "stale" when a stage file is older
+    than the start of an agent of an earlier stage before the reviews (that round will write it
+    again)."""
+    if any(f["state"] == "fix-pending" for f in items):
+        return "pending"
+    if flow_agent_running(stage_list, lanes):
+        return "agent"
+    since = 0.0
+    for s in stage_list:
+        # A lens with no finding in its last review is not re-run by the fix round: its file being
+        # older than the round is no sign of a review to come.
+        if s.get("settled") or s["agent"] == "retrospective":
+            continue
+        if s.get("file") and s["written"] and tdir:
+            written = (mtime_ns(os.path.join(tdir, s["file"])) or 0) / 1e9
+            if written < since:
+                return "stale"
+        # Only the stages before the reviews move the mark: lenses run side by side, and one
+        # lens re-run alone says nothing about the others.
+        if not s["needs_verdict"]:
+            starts = [a.get("start") or 0 for a in lanes if a["type"] == s["agent"] and a.get("ran")]
+            since = max([since, *starts])
+    return None
 
 
 def mtime_ns(path):
@@ -318,7 +410,7 @@ STEP_OF_STAGE = {"refiner": "contract", "executor": "change", "tester": "proof"}
 def next_step(st, stage_list):
     """A key, not prose: the page says it in the dev's language."""
     fixed = {"done": "clean-up", "FAIL": "fix-fail", "findings": "decide-findings", "clarify": "clarify",
-             "ready-for-mr": "open-mr", "blocked": "unblock", "running": "wait"}
+             "ready-for-mr": "open-mr", "blocked": "unblock", "running": "wait", "fixing": "wait-fixes"}
     if st in fixed:
         return fixed[st]
     # The retrospective runs after the reviews: it is never the next step before them.
@@ -357,7 +449,8 @@ def task_state(stage_list, lanes, tdir, mr, lookup_possible=True):
 
 
 FINDING_ITEM = re.compile(r"^(?:[-*]|\d+[.)])\s+(.*)$")
-FINDING_HEADING = re.compile(r"^#{3,}\s+(.*)$")
+FINDING_HEADING = re.compile(r"^(#{3,})\s+(.*)$")
+FINDING_DETAILS_MAX = 6000
 SEVERITY_NAMES = r"critical|blocker|high|major|important|medium|low|minor|info"
 SEVERITY_WORD = re.compile(r"\b(" + SEVERITY_NAMES + r")\b", re.I)
 # Forms the reviews use, most explicit first: "Severity: medium", "[medium]" or "(medium)",
@@ -388,18 +481,19 @@ def severity(text):
     return SEVERITY_OF.get(word, word)
 
 
-def summary_of(text):
+def summary_of(text, limit=200):
     text = re.sub(r"\s+", " ", re.sub(r"[*`]", "", text)).strip()
     text = re.sub(r"^\d+[.)]\s+", "", text)
     # The kit's route tag says who fixes it (scripts/decisions.py), not what the finding is.
-    return re.sub(r"^\[route:\s*\w+\]\s*", "", SEVERITY_LEAD.sub("", text, count=1), flags=re.I)[:200]
+    return re.sub(r"^\[route:\s*\w+\]\s*", "", SEVERITY_LEAD.sub("", text, count=1), flags=re.I)[:limit]
 
 
 def review_findings(tdir, stage_list):
-    """[{lens, severity, summary}] from the "## Findings" section of every review that is not a
-    plain PASS. A finding is a top-level list item, or a `###` heading that is numbered or starts
-    with its severity; the list items under such a heading are its details, and a "Severity:"
-    line there gives the severity the heading did not."""
+    """[{lens, severity, summary, full_text, details}] from the "## Findings" section of every
+    review that is not a plain PASS. A finding is a top-level list item, or a `###` heading that is
+    numbered or starts with its severity; what follows it (indented lines, a deeper heading, the
+    list items under a heading) is its details, and a "Severity:" line there gives the severity
+    the heading did not."""
     out = []
     for s in stage_list:
         if not s["needs_verdict"] or s["verdict"] not in ("PASS_WITH_FINDINGS", "FAIL"):
@@ -409,30 +503,57 @@ def review_findings(tdir, stage_list):
         text = read(os.path.join(tdir, s["file"])) or ""
         sec = re.search(r"^##\s+Findings\s*$(.*?)(?=^##\s|\Z)", text, re.M | re.S)
         heading = None  # the finding a heading opened, while its details follow
+        level = 0  # that heading's depth: a deeper heading (#### Fix) is part of its details
+        current = None  # the finding the next indented or blank lines belong to
         for line in (sec.group(1) if sec else "").splitlines():
             h = FINDING_HEADING.match(line)
+            if h and heading is not None and len(h.group(1)) > level:
+                heading["_details"].append(line)
+                continue
             if h:
-                body = h.group(1).strip()
+                body = h.group(2).strip()
                 if re.match(r"^\d+[.)]\s", body) or SEVERITY_LEAD.match(body) and SEVERITY_WORD.match(
                         re.sub(r"^[\[(*\s]+", "", body)):
                     heading = {"lens": lens, "severity": severity(body), "summary": summary_of(body),
-                               "route": decisions.route_of(body), "verdict": s["verdict"]}
+                               "full_text": summary_of(body, None), "route": decisions.route_of(body),
+                               "verdict": s["verdict"], "_details": []}
+                    level = len(h.group(1))
                     out.append(heading)
                 else:
                     heading = None
+                current = heading
                 continue
             if heading is not None:
                 if heading["severity"] == "unknown" and SEVERITY_FORMS[0].search(line):
                     heading["severity"] = severity(line)
+                heading["_details"].append(line)
                 continue
             item = FINDING_ITEM.match(line)
             if not item:
+                # A list finding's details: its indented sub-items and paragraphs.
+                if current is not None and (not line.strip() or line[:1] in " \t"):
+                    current["_details"].append(line)
+                else:
+                    current = None
                 continue
             body = item.group(1).strip()
             if re.fullmatch(r"(none|nothing|n/?a)\.?", body, re.I):
+                current = None
                 continue
-            out.append({"lens": lens, "severity": severity(body), "summary": summary_of(body),
-                        "route": decisions.route_of(body), "verdict": s["verdict"]})
+            current = {"lens": lens, "severity": severity(body), "summary": summary_of(body),
+                       "full_text": summary_of(body, None), "route": decisions.route_of(body),
+                       "verdict": s["verdict"], "_details": []}
+            out.append(current)
+    # The dev decides on the whole finding (scenario, fix), not on a title cut at 200 characters:
+    # the details go to the page, masked with the hooks' mask like every alert text. The key and
+    # the match of an older keyless line read the raw words, so a decision recorded before the
+    # mask still lands; every text the page gets is masked.
+    for f in out:
+        f["key"] = finding_key(f)
+        f["_raw"] = norm_summary(f["summary"])
+        f["summary"] = _FLOW.mask(f["summary"])
+        f["full_text"] = _FLOW.mask(f["full_text"])
+        f["details"] = _FLOW.mask(textwrap.dedent("\n".join(f.pop("_details"))).strip())[:FINDING_DETAILS_MAX]
     return out
 
 
@@ -449,7 +570,7 @@ def findings_view(tdir, stage_list, st):
             reason = "no-decision"
         elif not text.startswith("Decided:"):
             reason = "decision-without-date"
-        else:
+        elif any(f["decision"] is None for f in items):
             decided = mtime_ns(path) or 0
             newer = [re.sub(r"^04-review-(.+)\.md$", r"\1", s["file"]) for s in stage_list
                      if s["needs_verdict"] and s["written"] and (mtime_ns(os.path.join(tdir, s["file"])) or 0) > decided]
@@ -489,13 +610,13 @@ def decided_findings(tdir, stage_list, pins=None):
         if pins is not None and not entry[5]:
             pins[entry[4]] = f["key"]
     for f in items:
-        f["key"] = finding_key(f)
+        f["key"] = f.get("key") or finding_key(f)
         f["decision"] = f["state"] = None
         if f["key"] in keyed:
             decide(f, keyed[f["key"]])
     for f in items:
         hit = next((e for e in legacy if f["state"] is None and e[2] == f["lens"].lower()
-                    and e[3] == norm_summary(f["summary"])), None)
+                    and e[3] in (f.get("_raw"), norm_summary(f["summary"]))), None)
         if hit:
             legacy.remove(hit)
             decide(f, hit)
@@ -512,8 +633,21 @@ def decided_findings(tdir, stage_list, pins=None):
             if len(same) == 1 and len(lines) == 1:
                 legacy.remove(lines[0])
                 decide(f, lines[0])
+    # A fix is proven by the lens re-running without the finding. A review newer than the decision
+    # file that still lists a finding decided `fix` or marked `fixed` says the problem is still
+    # there: the finding opens again, never "ready for PR/MR" on an old line. `accepted` carries
+    # over: it was the dev's call on that very text.
+    decided_at = mtime_ns(path) if text is not None else None
+    if decided_at:
+        newer = {re.sub(r"^04-review-(.+)\.md$", r"\1", s["file"]).lower() for s in stage_list
+                 if s["needs_verdict"] and s["written"] and (mtime_ns(os.path.join(tdir, s["file"])) or 0) > decided_at}
+        for f in items:
+            if f["decision"] == "fix" and f["lens"].lower() in newer:
+                f["decision"] = f["state"] = None
+                f["reopened"] = True
     for f in items:
         f["state"] = f["state"] or "open"
+        f.pop("_raw", None)
     return items
 
 
@@ -589,6 +723,10 @@ def step_command(state, tid, wt, root, remote_host=None, forge=None):
         # to the shell history, and this one is copied from the page.
         return (f"cd {q(root)} && {host}read -rs {var} && export {var} && "
                 f"{WORK_SH} ui stop && {WORK_SH} ui start", "shell")
+    if step == "open-mr":
+        # ship.py pushes and opens the PR/MR when flow.json "ship" is on, and otherwise prints the
+        # push and the command for the dev's forge tool: either way one line to run.
+        return f"cd {q(wt)} && python3 .claude/kit/scripts/ship.py {q(tid)}", "shell"
     if step == "mark-done":
         return f"cd {q(wt)} && {WORK_SH} done {tid}", "shell"
     if step == "decide-findings":
@@ -794,6 +932,45 @@ def mr_for(tid, current, lookup):
     return None
 
 
+# A task's branch and PR/MR are its own, not the worktree's HEAD: a session that moved on to the
+# next part in the same worktree switched HEAD, and the finished part read ready-for-mr again.
+# `work.sh init` records the branch; the first PR/MR found is kept.
+TASK_BRANCH_RX = re.compile(r"^(?!-)(?!.*\.\.)[A-Za-z0-9._/-]{1,200}$")
+
+
+def task_branch(tdir, head):
+    """The branch the task started on (.work/<ID>/branch), else the worktree's HEAD (a task
+    from before the file existed)."""
+    got = (read(os.path.join(tdir, "branch"), 300) or "").strip() if tdir else ""
+    return got if TASK_BRANCH_RX.match(got) and got != "HEAD" else head
+
+
+def task_mr(tid, tdir, current, found, branch):
+    """The task's PR/MR: the lookup's, kept in .work/<ID>/mr.json once opened or merged; the kept
+    one when the lookup finds none or fails, so done survives a branch switch or an outage."""
+    mr = mr_for(tid, current, found)
+    path = os.path.join(tdir, "mr.json") if tdir else None
+    if isinstance(mr, dict) and mr.get("state") in ("opened", "merged") and isinstance(mr.get("iid"), int) \
+            and isinstance(mr.get("web_url"), str) and path:
+        keep = {"iid": mr["iid"], "url": mr["web_url"], "state": mr["state"], "branch": branch}
+        if read_json(path) != keep:
+            try:
+                tmp = path + ".tmp"
+                with open(tmp, "w") as f:
+                    json.dump(keep, f)
+                os.replace(tmp, path)
+            except OSError:
+                pass
+        return mr
+    if isinstance(mr, dict) and mr.get("state") in ("opened", "merged"):
+        return mr
+    kept = read_json(path) if path else None
+    if isinstance(kept, dict) and kept.get("state") in ("opened", "merged") and isinstance(kept.get("iid"), int) \
+            and isinstance(kept.get("url"), str) and re.match(r"^https?://", kept["url"]):
+        return {"iid": kept["iid"], "state": kept["state"], "web_url": kept["url"]}
+    return mr
+
+
 def title(tdir, tid):
     first = (read(os.path.join(tdir, "00-purpose.md"), 2000) or "").split("\n", 1)[0]
     return first.lstrip("# ").removeprefix(tid).strip()
@@ -819,7 +996,7 @@ def task_ids(wdir):
 def full_state(wt, branch, flow, tid, tdir, lanes, st_list, found, current, root):
     """task_state plus the next step's command, the branch kind and the findings to decide."""
     kind = branch_kind(branch, flow)
-    state = task_state(st_list, lanes, tdir, mr_for(tid, current, found), lookup_possible=kind == "feature")
+    state = task_state(st_list, lanes, tdir, task_mr(tid, tdir, current, found, branch), lookup_possible=kind == "feature")
     remote = parse_remote(git_out(wt, "remote", "get-url", "origin")) if state["next_step"] == "fix-mr-check" else None
     command, command_kind = step_command(state, tid, wt, root or wt, remote[0] if remote else None,
                                          forge_of(remote[0], flow) if remote else None)
@@ -835,23 +1012,108 @@ def worktree_tasks(wt, branch, now, lookup=True, root=None):
     wdir = work_dir(wt)
     ids = task_ids(wdir) if wdir else []
     if not ids:
-        return []
+        triage = triage_task(wt, wdir, now)
+        return [triage] if triage else []
     flow, evs = flow_of(wt), events(wdir)
     current = (read(os.path.join(wdir, "current"), 200) or "").strip()
-    found = mr_lookup(wt, branch, flow, now, network=lookup)
+    lookups = {}
     tasks = []
     for tid in ids:
         mine, tdir = evs.get(tid, []), os.path.join(wdir, tid)
-        state = full_state(wt, branch, flow, tid, tdir, agents(mine, now), stages(flow, tdir), found, current, root)
+        tb = task_branch(tdir, branch)
+        if tb not in lookups:
+            lookups[tb] = mr_lookup(wt, tb, flow, now, network=lookup)
+        state = full_state(wt, tb, flow, tid, tdir, agents(mine, now), stages(flow, tdir), lookups[tb], current, root)
         tasks.append({"id": tid, "title": title(tdir, tid), **state, "current": tid == current,
                       "updated": max([e.get("t", 0) for e in mine] or [os.path.getmtime(tdir)])})
     tasks.sort(key=lambda t: (not t["current"], -t["updated"]))
     return tasks
 
 
+TRIAGE_STAGE = {"agent": "triage", "file": None, "written": False, "needs_verdict": False, "verdict": None}
+# A task KEY (ABC-12): written in <work dir>/attention/.task-key by `work.sh triage <ID>`, or the
+# name of a worktree opened for that key.
+KEY_RX = re.compile(r"^[A-Z][A-Z0-9]*-\d+$")
+TASK_KEY_FILE = ".task-key"
+
+
+def triage_id(wt):
+    """The task KEY of a worktree opened for a task: the one recorded in it, else its name when the
+    name is a key (abc-12 gives ABC-12), else None. Only a linked worktree (its .git is a file): the
+    main checkout, or a worktree with neither, often has a session doing anything but a triage."""
+    if not os.path.isfile(os.path.join(wt, ".git")):
+        return None
+    wdir = work_dir(wt)
+    recorded = (read(os.path.join(wdir, "attention", TASK_KEY_FILE), 100) or "").strip() if wdir else ""
+    if KEY_RX.match(recorded):
+        return recorded
+    name = os.path.basename(wt).upper()
+    return name if KEY_RX.match(name) else None
+
+
+def triage_task(wt, wdir, now):
+    """The synthetic task of a worktree whose session is still in the task skill's triage: the
+    session asks language, lane and the interview before `work.sh init` writes 00-purpose.md, and
+    without this the worktree showed nothing for minutes, read as broken. None when the worktree has
+    a task or no live session: the real task replaces this one."""
+    tid = triage_id(wt) if wdir and not task_ids(wdir) else None
+    if not tid or not live_session(wdir, now):
+        return None
+    adir, marks = os.path.join(wdir, "attention"), []
+    try:
+        sessions = os.listdir(adir)
+    except OSError:
+        sessions = []
+    for session in sessions:
+        if safe_id(session):
+            marks.append(mtime_ns(os.path.join(adir, session, SESSION_MARKER)) or 0)
+    # Live through an alert or an event only: no marker to date it, so it is as recent as now.
+    updated = max(marks) / 1e9 if any(marks) else now
+    st = [dict(TRIAGE_STAGE)] + [dict(x) for x in stages(flow_of(wt), os.path.join(wdir, tid))]
+    for x in st:
+        x["written"], x["verdict"], x["na"], x["settled"] = False, None, False, False
+    # Nothing to close, clean or decide: the next step is answering the session, which the
+    # worktree's alerts already say.
+    return {"id": tid, "title": "triage", "triage": True, "status": "triage", "warning": None,
+            "closed_by": None, "mr": None, "next_step": None, "cleanable": False, "closable": False,
+            "command": None, "command_kind": None, "branch_kind": None, "findings": [], "findings_open": 0,
+            "findings_reason": None, "findings_review_newer": [], "current": False, "updated": updated, "stages": st}
+
+
+MERGE_TTL = 30
+_MERGE_CACHE = {}
+
+
+def merge_positions(root, now=None):
+    """{branch: {pos, total, after, pending, independent}} from merge-order.py, which counts each
+    worktree's uncommitted work too (running tasks keep theirs uncommitted); {} when the script
+    fails, so the sidebar shows nothing rather than a guessed order. Cached a few seconds."""
+    now = time.time() if now is None else now
+    ref = default_base(root)
+    hit = _MERGE_CACHE.get((root, ref))
+    if hit and 0 <= now - hit[0] < MERGE_TTL:
+        return hit[1]
+    try:
+        p = subprocess.run([sys.executable, os.path.join(KIT, "scripts", "merge-order.py"), "--base", ref, "--json"],
+                           capture_output=True, text=True, cwd=root, timeout=30)
+        got = json.loads(p.stdout) if p.returncode == 0 else None
+    except (OSError, subprocess.SubprocessError, ValueError):
+        got = None
+    out = {}
+    if isinstance(got, dict):
+        order = got.get("order") or []
+        for n, b in enumerate(order, 1):
+            out[b] = {"pos": n, "total": len(order), "pending": b in (got.get("pending") or []),
+                      "independent": b in (got.get("independent") or []),
+                      "after": [e["first"] for e in got.get("edges") or [] if e.get("then") == b]}
+    _MERGE_CACHE[(root, ref)] = (now, out)
+    return out
+
+
 def list_tasks(root, now=None):
     now = time.time() if now is None else now
     groups = []
+    merge = merge_positions(root, now)
     for i, (wt, branch) in enumerate(worktrees(root)):
         tasks = worktree_tasks(wt, branch, now, root=root)
         if not tasks:
@@ -859,7 +1121,7 @@ def list_tasks(root, now=None):
         # The path lets the page write "cd <path> && claude '<prompt>'" for a step done in a session.
         groups.append({"wt": i, "name": os.path.basename(wt), "branch": branch, "path": wt,
                        "here": os.path.realpath(wt) == os.path.realpath(root), "tasks": tasks,
-                       "switches": switches_of(wt)})
+                       "switches": switches_of(wt), "merge": merge.get(branch)})
     return groups
 
 
@@ -870,15 +1132,25 @@ def task_detail(root, wt_index, tid, now=None):
         return None
     wt, branch = wts[wt_index]
     wdir = work_dir(wt)
-    if not wdir or tid not in task_ids(wdir):
+    if not wdir:
         return None
+    if tid not in task_ids(wdir):
+        triage = triage_task(wt, wdir, now)
+        if not triage or triage["id"] != tid:
+            return None
+        return {**triage, "worktree": os.path.basename(wt), "path": wt, "branch": branch, "purpose": None, "lane": None,
+                "clarified": 0, "rounds": 0, "max_rounds": flow_of(wt).get("max_fix_rounds", 3), "rulings": [],
+                "files": {}, "agents": [], "events": []}
     tdir, flow = os.path.join(wdir, tid), flow_of(wt)
     mine = events(wdir).get(tid, [])
     lanes, st = agents(mine, now), stages(flow, tdir)
     current = (read(os.path.join(wdir, "current"), 200) or "").strip()
+    branch = task_branch(tdir, branch)
     state = full_state(wt, branch, flow, tid, tdir, lanes, st, mr_lookup(wt, branch, flow, now), current, root)
-    files = {s["file"]: read(os.path.join(tdir, s["file"])) for s in st if s["written"]}
-    purpose = read(os.path.join(tdir, "00-purpose.md")) or ""
+    # Review and stage text goes to the page through the hooks' mask, like every alert text: a
+    # reviewer quoting a credential must not put it on the screen.
+    files = {s["file"]: mask_text(read(os.path.join(tdir, s["file"]))) for s in st if s["written"]}
+    purpose = mask_text(read(os.path.join(tdir, "00-purpose.md")) or "")
     lane = re.search(r"^Lane:\s*(\w+)", purpose, re.M | re.I)
     # The template's example ruling sits inside an HTML comment: it is not a decision.
     ledger = re.sub(r"<!--.*?-->", "", read(os.path.join(tdir, "ledger.md")) or "", flags=re.S)
@@ -944,13 +1216,39 @@ def alerts(wdir, now):
             a = read_json(os.path.join(sdir, name))
             if not live(a, now):
                 continue
+            # Masked again with the server's own mask: the file was written by the worktree's
+            # hook, whose masking may be older or edited.
             item = {"session": session, "agent": agent, "kind": a["kind"], "since": a["since"],
-                    "detail": str(a.get("detail") or ""), "tool": a.get("tool"), "qid": a.get("qid"),
+                    "detail": _FLOW.mask(str(a.get("detail") or "")), "tool": a.get("tool"), "qid": a.get("qid"),
                     "held": held_now(a, now)}
+            if a["kind"] == "turn":
+                item["message"] = _FLOW.mask(str(a.get("message") or ""))[-TURN_MAX:]
             if a["kind"] == "question":
                 item.update(questions=a.get("questions") or [])
+            if a["kind"] in ("question", "turn"):
+                item.update(release_of(a, item["held"]))
             out.append(item)
     return out
+
+
+# Why a hold the page could answer no longer can: attention.py writes the reason when it lets go;
+# a hold killed or gone without writing it reads as "stopped" at its last heartbeat. None for a
+# question or turn that was never held (the dev answers in the terminal as always).
+RELEASE_REASONS = ("timeout", "page-gone", "switch-off", "released", "bad-answer", "agent-running", "stopped")
+
+
+def release_of(a, held):
+    if held:
+        return {"released": None, "released_at": None}
+    if a.get("released") is not None:
+        reason, at = a.get("released"), a.get("released_at")
+    elif a.get("held"):
+        # Still marked held, heartbeat stale: the hook was killed or its session went away.
+        reason, at = "stopped", a.get("heartbeat")
+    else:
+        return {"released": None, "released_at": None}
+    return {"released": reason if reason in RELEASE_REASONS else "stopped",
+            "released_at": at if isinstance(at, (int, float)) else None}
 
 
 def read_json(path):
@@ -961,17 +1259,27 @@ def read_json(path):
         return None
 
 
-def list_attention(root, now=None):
+# When a page last said it is in view (document.visibilityState "visible"). The holds wait an
+# hour for an open page; a forgotten background tab must not keep them, so only a page in view
+# marks `.page` fresh, by its polls and through the event stream.
+VISIBLE_FOR = 15
+_last_visible = [0.0]
+
+
+def list_attention(root, now=None, visible=True):
     """Alerts per worktree, including a worktree with no task: the session in the triage is
-    the case that waits on the dev most. Each call marks the page alive for the hold."""
+    the case that waits on the dev most. A call from a page in view marks the page alive for the
+    hold; one from a hidden tab (visible False) does not."""
     now = time.time() if now is None else now
+    if visible:
+        _last_visible[0] = time.time()
     groups = []
     for i, (wt, branch) in enumerate(worktrees(root)):
         wdir = work_dir(wt)
         if not wdir:
             continue
         adir = os.path.join(wdir, "attention")
-        if os.path.isdir(adir):
+        if visible and os.path.isdir(adir):
             try:
                 with open(os.path.join(adir, ".page"), "a"):
                     pass
@@ -982,17 +1290,126 @@ def list_attention(root, now=None):
         answers_on = os.path.exists(os.path.join(adir, "answers-on"))
         for a in found:
             a.update(alert_action(a, answers_on, wt))
+            if a["kind"] == "turn" and not a.get("message"):
+                a["message"] = transcript_tail(wt, a["session"], os.path.expanduser("~")) or a["detail"]
+            a["awaits"] = awaits(a, wdir, now)
+            a["idle"] = a["awaits"] and idle_only(a)
         q = shlex.quote
         memory = [{"id": tid, "action": "open-session", "command": f"cd {q(wt)} && claude {q('review the auto memory of ' + tid)}", "command_kind": "shell"}
                   for tid in pending]
         check = mr_check(wt, branch, now, root)
-        # A memory request nobody consumed and a failed MR lookup wait on the dev too.
-        if found or pending or check:
+        # A memory request nobody consumed and a failed MR lookup wait on the dev too. A live session
+        # with no task and no alert up (a triage between two questions) is listed as well: it
+        # carries the switches, and turning one off used to hide the row and the way back.
+        if found or pending or check or live_session(wdir, now):
             groups.append({"wt": i, "name": os.path.basename(wt), "branch": branch, "path": wt,
                            "here": os.path.realpath(wt) == os.path.realpath(root),
                            "answers": answers_on, "turns": os.path.exists(os.path.join(adir, "turns-on")), "alerts": found,
                            "memory_requests": pending, "memory_actions": memory, "mr_check": check})
     return groups
+
+
+# Whether a "your turn" waits on the dev. A session that stops while its subagents run, or whose
+# last message is a progress note, is not asking anything: shown as pending, it taught the dev to
+# read every turn as noise. The words miss some asks, so a turn nothing resumed for AWAIT_AFTER
+# seconds waits on the dev whatever it says, as "idle": shown, neutral, never counted or beeped.
+AWAIT_AFTER = 120
+RUNNING = ".running"
+
+
+def subagents_running(wdir, session, now):
+    """hooks/attention.py keeps <session>/.running/<agent> between SubagentStart and SubagentStop,
+    touched on each of its tool calls. A marker older than STALE_AFTER is an agent whose stop never
+    came (a killed session), unless its agent still logs tool events: an older hook wrote the
+    marker once, and a long stage read as gone while it worked."""
+    rdir = os.path.join(wdir, "attention", session, RUNNING)
+    try:
+        names = os.listdir(rdir)
+    except OSError:
+        return False
+    if any(now - (mtime_ns(os.path.join(rdir, n)) or 0) / 1e9 < STALE_AFTER for n in names):
+        return True
+    last = {}
+    for evs in events(wdir).values():
+        for e in evs:
+            last[e["agent"]] = max(last.get(e["agent"], 0), e["t"])
+    return any(now - last.get(n, 0) < STALE_AFTER for n in names)
+
+
+def awaits(alert, wdir, now):
+    """True when the alert waits on the dev: a question or a permission always; a turn while the
+    hook holds it (its session is blocked until answered), or when no subagent of its session runs
+    and either the end of its message asks something or it has stood AWAIT_AFTER seconds."""
+    if alert.get("kind") != "turn":
+        return True
+    if alert.get("held"):
+        return True
+    if subagents_running(wdir, alert.get("session") or "", now):
+        return False
+    if _FLOW.asks(alert.get("message") or alert.get("detail")):
+        return True
+    since = alert.get("since")
+    return isinstance(since, (int, float)) and now - since >= AWAIT_AFTER
+
+
+def idle_only(alert):
+    """A turn that awaits only by the AWAIT_AFTER rule: its message asks nothing and no hook holds
+    it. The page lists it under "Idle sessions", neutral and uncounted, never under Answer: the
+    dev looked for a question in that terminal and found just the prompt."""
+    return alert.get("kind") == "turn" and not alert.get("held") and not _FLOW.asks(alert.get("message") or alert.get("detail"))
+
+
+TURN_MAX = 8000
+_tail_cache = {}
+
+
+def transcript_tail(wt, session, home_dir):
+    """The last assistant text of a session, masked, from its transcript under
+    <config>/projects/<key of the worktree>/<session>.jsonl. Fallback for a "your turn" alert
+    written by an older hook, which kept only the first 200 characters: the ask ("ok?") is at
+    the end of the message, and the dev had to read it in the terminal."""
+    if not safe_id(session):
+        return ""
+    # Claude Code keys a project by the path it was started in, which may be the symlinked one
+    # (/tmp against /private/tmp): both spellings are tried.
+    keys = list(dict.fromkeys(re.sub(r"[^A-Za-z0-9]", "-", p) for p in (wt, os.path.realpath(wt))))
+    configs = [os.environ.get("CLAUDE_CONFIG_DIR") or ""]
+    try:
+        configs += [os.path.join(home_dir, n) for n in sorted(os.listdir(home_dir))
+                    if n == ".claude" or n.startswith(".claude-")]
+    except OSError:
+        pass
+    for config, key in ((c, k) for c in filter(None, configs) for k in keys):
+        path = os.path.join(config, "projects", key, session + ".jsonl")
+        try:
+            st = os.stat(path)
+        except OSError:
+            continue
+        hit = _tail_cache.get(path)
+        if hit and hit[0] == st.st_mtime:
+            return hit[1]
+        text = ""
+        try:
+            with open(path, "rb") as f:
+                f.seek(max(0, st.st_size - 1_000_000))
+                lines = f.read().decode("utf-8", "replace").splitlines()
+        except OSError:
+            lines = []
+        for line in reversed(lines):
+            try:
+                entry = json.loads(line)
+            except ValueError:
+                continue
+            msg = entry.get("message") if isinstance(entry, dict) and entry.get("type") == "assistant" else None
+            parts = msg.get("content") if isinstance(msg, dict) else None
+            texts = [p.get("text", "") for p in parts if isinstance(p, dict) and p.get("type") == "text"] \
+                if isinstance(parts, list) else []
+            if any(t.strip() for t in texts):
+                text = _FLOW.mask("\n".join(texts))[-TURN_MAX:]
+                break
+        _tail_cache[path] = (st.st_mtime, text)
+        return text
+    return ""
 
 
 def alert_action(alert, answers_on, wt):
@@ -1332,7 +1749,8 @@ def close_task(root, body, now=None):
             or not ID_RX.fullmatch(tid):
         return 404, failure("no-such-task", "no such task")
     task = next((t for t in worktree_tasks(wts[wi][0], wts[wi][1], now, root=root) if t["id"] == tid), None)
-    if task is None:
+    # A triage task has no directory to write `closed` into: it ends when `work.sh init` runs.
+    if task is None or task.get("triage"):
         return 404, failure("no-such-task", "no such task")
     if task["status"] == "done":
         return 409, failure("already-done", "already done")
@@ -1500,6 +1918,9 @@ def valid_picks(questions, picks):
     return True
 
 
+FINDINGS_DECIDED = "findings decided on the dashboard for {id}: read findings-decision.md and go on"
+
+
 def answer(root, body, now=None):
     """(status, message). Writes <agent>.answer.json or <agent>.release next to a question the
     hook is holding right now; anything else writes nothing."""
@@ -1527,7 +1948,14 @@ def answer(root, body, now=None):
             return 400, "behavior must be allow or deny"
         target, content = base + ".answer.json", json.dumps({"qid": qid, "behavior": body["behavior"], "via": "web"})
     elif a["kind"] == "turn":
-        message = body.get("message")
+        if body.get("kind") is not None:
+            # A message the server builds, never one the page wrote: the findings decided.
+            tid = body.get("id")
+            if body.get("kind") != "findings-decided" or not isinstance(tid, str) or not ID_RX.fullmatch(tid):
+                return 400, "kind findings-decided and a task id"
+            message = FINDINGS_DECIDED.format(id=tid)
+        else:
+            message = body.get("message")
         if not isinstance(message, str) or not message.strip() or len(message) > MAX_OTHER:
             return 400, "message must be a non-empty text of at most 4000 characters"
         target, content = base + ".answer.json", json.dumps({"qid": qid, "message": message, "via": "web"})
@@ -1591,7 +2019,10 @@ def change_signature(root):
 
 def touch_pages(root):
     """While a stream is open the page is open: the hold (attention.py) waits for the web only
-    while `.page` is fresh, and a throttled background tab may poll /api/attention rarely."""
+    while `.page` is fresh, and a throttled background tab may poll /api/attention rarely. Only
+    while a page said it is in view in the last VISIBLE_FOR seconds."""
+    if time.time() - _last_visible[0] > VISIBLE_FOR:
+        return
     for wt, _ in worktrees(root):
         wdir = work_dir(wt)
         adir = os.path.join(wdir, "attention") if wdir else None
@@ -1736,7 +2167,8 @@ class Handler(http.server.BaseHTTPRequestHandler):
         if root is None and (url.path.startswith("/api/") or url.path == "/flow.json"):
             return self.send(404, json.dumps({"error": "no such project"}), "application/json")
         if url.path == "/api/attention":
-            return self.send(200, json.dumps(list_attention(root)), "application/json")
+            visible = q.get("visible") == ["1"]
+            return self.send(200, json.dumps(list_attention(root, visible=visible)), "application/json")
         if url.path == "/api/worktrees":
             return self.send(200, json.dumps(list_worktrees(root)), "application/json")
         if url.path in ("/api/answer", "/api/cleanup", "/api/close", "/api/findings-decision", "/api/switch"):

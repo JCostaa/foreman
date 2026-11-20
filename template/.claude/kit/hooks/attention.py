@@ -25,7 +25,7 @@ Web answers (opt-in, `work.sh ui answers on`): the hold keeps the AskUserQuestio
 dashboard while the page is open, and answers it through the documented PreToolUse contract
 (permissionDecision "allow" + updatedInput with an `answers` map). It releases to the terminal
 on the "answer in the terminal" button, when the page goes away, when answers are turned off,
-and before the hook timeout (600 s in settings.json), because a hook killed at its timeout
+and before the hook timeout (3600 s in settings.json), because a hook killed at its timeout
 shows an error instead of the dialog.
 """
 import json
@@ -47,8 +47,10 @@ def _env_seconds(name, default):
         return float(default)
 
 
-# 30 s under the 600 s hook timeout: the kill would leave a hook error instead of a fallback.
-HOLD_SECONDS = _env_seconds("KIT_ATTENTION_HOLD", 570)
+# 30 s under the 3600 s hook timeout (wire_hooks.py, measured): the kill would leave a hook error
+# instead of a fallback. While a page stays open and in view the hold waits that long; PAGE_GONE
+# lets go 30 s after the page closes or hides, so a long hold never keeps a dev who left the page.
+HOLD_SECONDS = _env_seconds("KIT_ATTENTION_HOLD", 3570)
 # The main session's turn waits for the page as long as the page stays open, so the chat reaches
 # it at any time: 30 s under its own 8 h hook timeout. Waiting costs no tokens (a local poll).
 TURN_HOLD_SECONDS = _env_seconds("KIT_ATTENTION_TURN_HOLD", 8 * 3600 - 30)
@@ -93,6 +95,15 @@ def unlink(path):
 
 def short(text, limit=DETAIL_MAX):
     return F.mask(str(text or ""))[:limit]
+
+
+# The whole last message of a turn, masked, for the page: its question or "ok?" is at the end,
+# past the 200 characters of the detail, and the dev read the terminal to see it.
+TURN_MAX = 8000
+
+
+def turn_message(text):
+    return F.mask(str(text or ""))[-TURN_MAX:]
 
 
 def claude_pid():
@@ -172,11 +183,25 @@ def running_marker(flow, session, agent):
     return os.path.join(attention_dir(flow), session, RUNNING, agent)
 
 
+# A marker older than this is an agent whose stop never came (a killed session): every tool call of
+# a running subagent touches its marker (PostToolUse), so a long stage stays fresh.
+RUNNING_STALE = 15 * 60
+
+
 def subagent_running(flow, session):
+    rdir = os.path.join(attention_dir(flow), session, RUNNING)
     try:
-        return bool(os.listdir(os.path.join(attention_dir(flow), session, RUNNING)))
+        names = os.listdir(rdir)
     except (FileNotFoundError, NotADirectoryError):
         return False
+    now = time.time()
+    for n in names:
+        try:
+            if now - os.path.getmtime(os.path.join(rdir, n)) < RUNNING_STALE:
+                return True
+        except OSError:
+            continue
+    return False
 
 
 def handle(event, flow):
@@ -189,9 +214,16 @@ def handle(event, flow):
             unlink(path)
         if name == "PostToolUse" and not event.get("agent_id"):
             memory_requests(flow, "PostToolUse", only="findings-")
-        marker = running_marker(flow, session, agent) if name == "SubagentStop" else None
-        if marker:
+        marker = running_marker(flow, session, agent)
+        if marker and name == "SubagentStop":
             unlink(marker)
+        elif marker and os.path.exists(marker):
+            # A subagent's tool call says it is still working: a marker is aged by its mtime, and
+            # a stage of 15 to 40 minutes would otherwise read as gone.
+            try:
+                os.utime(marker)
+            except OSError:
+                pass
     elif name == "SubagentStart":
         marker = running_marker(flow, session, agent)
         if marker:
@@ -216,10 +248,9 @@ def handle(event, flow):
         if path and not os.path.exists(path):
             raise_alert(flow, event, "permission", event.get("message") or "permission prompt")
     elif name == "Stop":
-        # A turn that ends while its subagents still run is not the dev's turn: Claude Code wakes
-        # the session when they finish.
-        if not turns_on(attention_dir(flow)) and not subagent_running(flow, session):
-            raise_alert(flow, event, "turn", event.get("last_assistant_message") or "")
+        if not turns_on(attention_dir(flow)):
+            raise_alert(flow, event, "turn", event.get("last_assistant_message") or "",
+                        message=turn_message(event.get("last_assistant_message")))
     elif name == "UserPromptSubmit":
         clear_session(flow, session, keep_running=True)
         mark_session(flow, session)
@@ -384,12 +415,15 @@ def turns_on(adir):
 MAX_MESSAGE = 4000
 
 
-def wait_page(path, alert, adir, pid, still_on, extra=None, hold=None):
+def wait_page(path, alert, adir, pid, still_on, extra=None, let_go=None, hold=None):
     """Holds while the page is open: the answer the page wrote ({qid, via: web, ...}), or None
     when it was released, the page went away, the switch went off, the session died or time ran
-    out. The alert carries a heartbeat so the page knows it is held."""
+    out; alert["released"] then says why, for the page. let_go, when given, returns a reason to
+    stop holding (a subagent of the session started). The alert carries a heartbeat so the page
+    knows it is held."""
     answer_path, release_path = path[:-len(".json")] + ".answer.json", path[:-len(".json")] + ".release"
-    deadline, beat = time.monotonic() + (HOLD_SECONDS if hold is None else hold), time.monotonic()
+    deadline, beat = time.monotonic() + (hold if hold is not None else HOLD_SECONDS), time.monotonic()
+    alert["released"] = "timeout"
     while time.monotonic() < deadline:
         time.sleep(POLL)
         got = extra() if extra else None
@@ -400,14 +434,21 @@ def wait_page(path, alert, adir, pid, still_on, extra=None, hold=None):
             unlink(answer_path)
             if isinstance(picked, dict) and picked.get("qid") == alert["qid"] and picked.get("via") == "web":
                 return picked
+            alert["released"] = "bad-answer"
             return None
         if os.path.exists(release_path):
             unlink(release_path)
+            alert["released"] = "released"
             return None
         if pid and not pid_alive(pid):
             unlink(path)
             return None
+        why = let_go() if let_go else None
+        if why:
+            alert["released"] = why
+            return None
         if not still_on() or page_age(adir) > PAGE_GONE:
+            alert["released"] = "switch-off" if not still_on() else "page-gone"
             return None
         if time.monotonic() - beat >= HEARTBEAT_EVERY:
             beat = time.monotonic()
@@ -417,22 +458,27 @@ def wait_page(path, alert, adir, pid, still_on, extra=None, hold=None):
     return None
 
 
-def hold_alert(flow, event, kind, detail, still_on, extra=None, hold=None, **fields):
-    """Raises the alert, held for the page when it is open; returns (path, alert, answer)."""
+def hold_alert(flow, event, kind, detail, still_on, extra=None, holdable=True, let_go=None, hold=None, **fields):
+    """Raises the alert, held for the page when it is open and holdable; returns (path, alert,
+    answer). A hold that lets go records why and when (released, released_at) for the page."""
     path = F.alert_path(flow, event.get("session_id"), event.get("agent_id") or "main")
     if not path:
         return None, None, None
     adir = attention_dir(flow)
     for suffix in (".answer.json", ".release"):
         unlink(path[:-len(".json")] + suffix)
-    held = still_on() and page_age(adir) < PAGE_FRESH
+    held = holdable and still_on() and page_age(adir) < PAGE_FRESH
     pid = claude_pid()
     alert = {"kind": kind, "since": time.time(), "detail": short(detail, TURN_MAX if kind == "turn" else DETAIL_MAX), "claude_pid": pid,
              "qid": secrets.token_urlsafe(16), "held": held, "heartbeat": time.time(), **fields}
     write_json(path, alert)
-    picked = wait_page(path, alert, adir, pid, still_on, extra, hold) if held else None
+    picked = wait_page(path, alert, adir, pid, still_on, extra, let_go, hold) if held else None
     if picked is None and os.path.exists(path):
         alert["held"] = False
+        if held:
+            alert["released_at"] = time.time()
+        else:
+            alert.pop("released", None)
         write_json(path, alert)
     return path, alert, picked
 
@@ -501,14 +547,26 @@ def hold_turn(event, flow):
     tid = F.current_id(flow) if hasattr(F, "current_id") else None
     if event.get("agent_id") or not (turns_on(adir) or awaiting_findings(flow, tid)):
         return 0
-    # The session launched subagents in the background and ended its turn to wait for them.
-    # Holding it would keep their "done" notice from waking it until the hold ends: the flow
-    # would stall between stages. It is not the dev's turn yet.
-    if subagent_running(flow, event.get("session_id")):
-        return 0
-    path, alert, picked = hold_alert(flow, event, "turn", event.get("last_assistant_message") or "",
+    session, text = event.get("session_id"), event.get("last_assistant_message") or ""
+    awaiting = awaiting_findings(flow, tid)
+    # Only a turn that asks something is held, never one whose session has a subagent running:
+    # while the Stop is held the session cannot take its subagent's completion and wake by itself,
+    # and it sat blocked on a progress note while the page showed nothing to answer.
+    holdable = (awaiting or F.asks(text)) and not subagent_running(flow, session)
+    path_now = F.alert_path(flow, session, "main")
+
+    def let_go():
+        if subagent_running(flow, session):
+            return "agent-running"
+        # The dev typed in the terminal: UserPromptSubmit cleared the alert, the text goes in now.
+        if path_now and not os.path.exists(path_now):
+            return "prompted"
+        return None
+    path, alert, picked = hold_alert(flow, event, "turn", text,
                                      lambda: turns_on(adir) or awaiting_findings(flow, tid),
-                                     extra=lambda: claim_findings(flow, tid), hold=TURN_HOLD_SECONDS, waits_for="findings" if awaiting_findings(flow, tid) else None)
+                                     extra=lambda: claim_findings(flow, tid), holdable=holdable, let_go=let_go,
+                                     hold=TURN_HOLD_SECONDS,
+                                     waits_for="findings" if awaiting else None, message=turn_message(text))
     if isinstance(picked, dict) and picked.get("context"):
         if path:
             unlink(path)
@@ -549,6 +607,8 @@ def hold(event, flow):
         return 0
 
     deadline, beat = time.monotonic() + HOLD_SECONDS, time.monotonic()
+    # Why the hold let go, for the page: "timeout" unless something else ended it first.
+    released = "timeout"
     while time.monotonic() < deadline:
         time.sleep(POLL)
         picked = read_json(answer_path)
@@ -564,15 +624,18 @@ def hold(event, flow):
                     "updatedInput": {**tool_input, "questions": questions, "answers": answers}}},
                     ensure_ascii=False))
                 return 0
+            released = "bad-answer"
             break
         if os.path.exists(release_path):
             unlink(release_path)
+            released = "released"
             break
         if pid and not pid_alive(pid):
             # The session died: nobody will read an answer, and the alert would show forever.
             unlink(path)
             return 0
         if not answers_on(adir) or page_age(adir) > PAGE_GONE:
+            released = "switch-off" if not answers_on(adir) else "page-gone"
             break
         if time.monotonic() - beat >= HEARTBEAT_EVERY:
             beat = time.monotonic()
@@ -580,7 +643,7 @@ def hold(event, flow):
             if os.path.exists(path):
                 write_json(path, alert)
     if os.path.exists(path):
-        alert["held"] = False
+        alert.update(held=False, released=released, released_at=time.time())
         write_json(path, alert)
     return 0
 

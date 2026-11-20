@@ -43,6 +43,35 @@
 - The animation runs only while someone walks, so a still site costs nothing.
 - Fixed: the "your turn" and "approve in the terminal" alerts showed a raw `{session}`.
 
+## 0.10.0
+
+From a fork of this kit used daily on a production codebase:
+
+- **Statuses match the terminal.** A fix round never reads ready-for-PR (a fix-pending finding or
+  a flow agent at work); a decided FAIL being fixed reads as the fix round; a newer review with
+  nothing undecided asks nothing; a finding decided fix or fixed that a re-run review still lists
+  opens again; a lens with a PASS stays settled in a fix round; `## Not applicable` reads as
+  such only on a PASS; "paused after <stage>" when nothing runs. A task keeps its own branch and
+  PR/MR (`.work/<ID>/branch`, `mr.json`), so done survives a branch switch.
+- **Holds and turns.** One ask classifier for the hook and the page; only a turn that asks is
+  held, never while a subagent runs, and a held one lets go when one starts; `.running` markers
+  are refreshed and counted while their agent logs events; only a visible page keeps a hold; a
+  released hold says why and what to do. A turn shows its whole last message, masked by the
+  server, with a transcript fallback for older hooks.
+- **Needs you** is one list grouped by action (Answer, Approve, Decide, Ship, Idle sessions,
+  Progress), each item in one place; idle sessions are out of the counts. Findings are decided
+  in one place with one send, shown whole with their details; the page answers only the
+  session's own `Findings <ID>:` question.
+- **Sidebar and top bar.** One row per task (dot, ID, title, part, one count), filter, keyboard,
+  done folded, merge order section, resizable and foldable to a rail; one settings menu; a calm
+  needs panel; fold hints on capped lists. A worktree still in its triage shows as a triage task.
+- **Merge order** counts each worktree's uncommitted work.
+- **Ship (optional):** `ship.py` pushes the task's branch and opens the PR/MR with `gh`, `glab`
+  or a custom command; off by default.
+- **Robustness.** Hooks in a linked worktree run the main checkout's copy of the kit (only for a
+  real worktree); `ui start` takes a port left in TIME_WAIT and skips one in use; a browser suite
+  (Playwright) covers the page.
+
 ## 0.9.3
 
 - The office is now a construction site, as fits a foreman: a drafting room (blueprint floor),

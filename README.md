@@ -374,14 +374,33 @@ title. In Codex or Copilot, where there are no slash commands, say "follow
 </tr>
 </table>
 
+**What the page tells you, and where.**
+
+- **Needs you** is one list grouped by what you do: *Answer* (a question, or a turn that asks
+  something), *Approve* (a permission), *Decide* (findings, decided in the task's steps with one
+  "Send N decisions"), *Ship* (ready for a PR/MR). A session that only stopped sits apart under
+  *Idle sessions*, and a working one under *Progress*, both grey and out of the counts. The
+  badges, the tab title and the list count the same items.
+- **A status matches the terminal.** A fix round never reads ready-for-PR, a decided FAIL being
+  fixed reads as the fix round, nothing asks you to decide when nothing is undecided, and a
+  finding a re-run review still lists opens again.
+- **A held question or turn says why it let go** (the page hidden or closed, a timeout, a
+  subagent started) and what to do: the picks to choose in the terminal, or the text to copy.
+  Only a turn that asks is held, never while a subagent runs, so a session wakes by itself.
+- **The sidebar navigates:** one row per task with a status dot and one count, a filter (`/`),
+  up/down/Enter, done tasks folded, the merge order (uncommitted work included) at the bottom;
+  drag its edge to resize, or fold it to a rail of dots. Settings live in one gear menu.
+
 ### Finishing a task
 
 1. If a reviewer passed with findings, you decide each one on the dashboard ("Fix it" or
    "Accept as it is") or answer the session's question. A finding of a failed review inside the
    fix-round cap is the agents': the page says so and you only watch.
 2. The retrospective proposes learnings; you approve what goes into `LEARNINGS.md`.
-3. The agent runs the project's check, then you open the pull or merge request (a failing
-   check stops it). The task shows `done` once it is open or merged. For work with no PR (an
+3. The agent runs the project's check, then ships it (a failing check stops it): with
+   `"ship"` on in `flow.json` it pushes the branch and opens the pull or merge request with your
+   tool (`gh`, `glab` or a command of your own, see [Shipping a task](#shipping-a-task-optional));
+   off, it gives you the push and the command to run. The task shows `done` once it is open or merged. For work with no PR (an
    investigation, a config change made elsewhere): "Mark as done" on the dashboard, or
    `work.sh done`.
 4. Start the next task after `/clear` or in a new session.
@@ -389,6 +408,25 @@ title. In Codex or Copilot, where there are no slash commands, say "follow
    offer the next session makes. You see the plan and pick what goes: the task's state, the
    worktree and its local branch, and a review of Claude's auto memory about the task (the next
    prompt in that worktree lists the entries and you check the ones to delete).
+
+### Shipping a task (optional)
+
+Off by default. In `flow.json`:
+
+```json
+"ship": {"enabled": true, "tool": "auto", "push": true, "draft": true, "command": ""}
+```
+
+- `tool`: `auto` picks `gh` for github.com and `glab` for a GitLab; `gh`, `glab`; `custom` runs
+  `command`, a template with `{base}`, `{branch}`, `{title}`, `{body_file}` and `{draft}` (each
+  value is passed as one quoted word), for Bitbucket, Azure DevOps, Gitea or a company script;
+  `none` never runs a tool.
+- `python3 .claude/kit/scripts/ship.py <ID>` pushes the task's own branch (never with force,
+  never a base branch), opens the PR/MR from `.work/<ID>/pr-body.md`, and keeps its URL in
+  `.work/<ID>/mr.json`, so the dashboard shows the task done at once. Off, it prints the push and
+  the command instead.
+- It never asks for, reads or prints a token: a missing or logged-out tool is named with what to
+  run (`gh auth login`, `glab auth login --hostname <host>`).
 
 ### 8. Keep it current
 

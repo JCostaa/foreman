@@ -5,7 +5,7 @@ lets the dev decide one at a time (POST /api/findings-decision). This adds what 
 decide from the page alone:
 
   view     needs-you   open on a PASS_WITH_FINDINGS review, a FAIL after max_fix_rounds, or a fix
-                       the newer review still reports: only the dev moves it
+                       the newer review of its lens still reports (reopened): only the dev moves it
            agent       open on a FAIL review inside the fix-round cap: the stage its route names
                        fixes it on its own
            fixing      the dev asked for a fix and no review ran since
@@ -33,31 +33,21 @@ def route_of(text):
     return m.group(1).lower() if m else None
 
 
-def mtime_ns(path):
-    try:
-        return os.stat(path).st_mtime_ns
-    except OSError:
-        return None
-
-
 def request_path(work_dir, tid):
     return os.path.join(work_dir, "attention", ".requests", f"findings-{tid}.json")
 
 
 def enrich(state, tdir, stage_list, rounds, max_rounds, work_dir, tid):
     findings = state.get("findings") or []
-    decided_at = mtime_ns(os.path.join(tdir, "findings-decision.md")) if tdir else None
-    re_reviewed = decided_at is not None and any(
-        (mtime_ns(os.path.join(tdir, s["file"])) or 0) > decided_at for s in stage_list if s["needs_verdict"] and s["written"])
     capped = rounds >= max_rounds
     for f in findings:
         st, route = f.get("state"), f.get("route") or "executor"
-        if st == "open" and f.get("verdict") == "FAIL" and not capped:
+        # A fix the newer review of its lens still reports comes back open (dashboard.py,
+        # decided_findings, "reopened"): the dev's again, never the fix loop's.
+        if st == "open" and f.get("verdict") == "FAIL" and not capped and not f.get("reopened"):
             f["view"], f["actor"] = "agent", route
         elif st == "fix-pending":
-            # Asked before the last review, and still reported by it: the dev's again.
-            f["view"], f["actor"] = ("needs-you", "dev") if re_reviewed else ("fixing", route)
-            f["reopened"] = re_reviewed
+            f["view"], f["actor"] = "fixing", route
         elif st in ("fixed", "accepted"):
             f["view"], f["actor"] = st, None
         else:
